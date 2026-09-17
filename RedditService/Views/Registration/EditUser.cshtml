@@ -1,0 +1,86 @@
+﻿@model RedditService.Models.User
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit user</title>
+    <link rel="stylesheet" href="~/Content/EditUser.css">
+</head>
+<body>
+    <div class="container">
+        <div class="registration-form">
+            <h2>Edit User</h2>
+            <form action="/Registration/EditUser" method="POST" enctype="multipart/form-data">
+                <img src="@Model.PhotoUrl" alt="Slika" height="70" width="70">
+                <label for="firstName">First Name:</label>
+                <input type="text" id="firstName" name="Name" value="@Model.Name" required>
+
+                <label for="lastName">Last Name:</label>
+                <input type="text" id="lastName" name="Lastname" value="@Model.Lastname" required>
+
+                <label for="address">Address:</label>
+                <input type="text" id="address" name="Address" value="@Model.Address" required>
+
+                <label for="city">City:</label>
+                <input type="text" id="city" name="City" value="@Model.City" required>
+
+                <label for="state">State:</label>
+                <input type="text" id="state" name="Country" value="@Model.Country" required>
+
+                <label for="phoneNumber">Phone Number:</label>
+                <input type="tel" id="phoneNumber" name="PhoneNumber" value="@Model.PhoneNumber" required>
+
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="Email" value="@Model.Email" required>
+
+                <label for="password">Password:</label>
+                <input type="text" id="password" name="Password" value="@Model.Password" required>
+
+                <label for="picture">Picture:</label>
+                <input type="file" id="picture" name="file" accept="image/*" required>
+                <label id="ErrorEmail">@ViewBag.EditError</label>
+                <button type="submit">Update</button>
+            </form>
+        </div>
+
+        <div class="user-topics">
+            <h2>Your Topics</h2>
+            @if (Model.Topics != null)
+            {
+                foreach (var topic in Model.Topics)
+                {
+                    <div class="topic">
+                        <h3>@topic.Title</h3>
+                        <p>@topic.Description</p>
+
+                        <div class="topic-buttons">
+                            <form action="/Registration/DeleteTopic" method="post">
+                                <input type="hidden" name="topicId" value="@topic.Id">
+                                <button type="submit" class="delete-button">Delete Topic</button>
+                            </form>
+                        </div>
+
+                        <div class="comments">
+                            <h4>Comments</h4>
+                            @foreach (var comment in topic.Comments)
+                            {
+                                <div class="comment">
+                                    <p><strong>@comment.Author:</strong> @comment.Text</p>
+                                    <form action="/Registration/DeleteComment" method="post">
+                                        <input type="hidden" name="commentId" value="@comment.Id">
+                                        <input type="hidden" name="topicId" value="@topic.Id">
+                                        <button type="submit" class="delete-button">Delete Comment</button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+
+        </div>
+    </div>
+</body>
+</html>

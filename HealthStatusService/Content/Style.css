@@ -1,0 +1,58 @@
+﻿body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f4f4f4;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    max-width: 600px;
+    margin: auto;
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+h2 {
+    color: #333;
+    text-align: center;
+}
+
+.uptime {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 20px;
+}
+
+.uptime div {
+    width: 45%; /* Smanjuje širinu kontejnera za grafikone */
+    margin: 0 auto; /* Centrira grafikone */
+}
+
+canvas {
+    max-width: 100%; /* Osigurava da grafikoni ne prelaze širinu kontejnera */
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+table, th, td {
+    border: 1px solid #ddd;
+}
+
+th, td {
+    text-align: left;
+    padding: 8px;
+}
+
+th {
+    background-color: #f7f7f7;
+}
+
+tr:nth-child(even) {
+    background-color: #f2f2f2;
+}

@@ -1,0 +1,601 @@
+TITLEPAGE|Filip Bašta|RAZVOJ VEB APLIKACIJE U OBLAKU SA KOMUNIKACIJOM U REALNOM VREMENU|2026
+TOC|
+PB|
+H1X|Skraćenice korišćene u radu
+TABLE|2
+TR|API|Application Programming Interface
+TR|CDN|Content Delivery Network
+TR|CRUD|Create, Read, Update, Delete
+TR|CSS|Cascading Style Sheets
+TR|DOM|Document Object Model
+TR|DTO|Data Transfer Object
+TR|GUID|Globally Unique Identifier
+TR|HTTP|Hypertext Transfer Protocol
+TR|IIS|Internet Information Services
+TR|JSON|JavaScript Object Notation
+TR|MVC|Model-View-Controller
+TR|NoSQL|Not only SQL
+TR|OWIN|Open Web Interface for .NET
+TR|RPC|Remote Procedure Call
+TR|SDK|Software Development Kit
+TR|SMTP|Simple Mail Transfer Protocol
+TR|SPOF|Single Point of Failure
+TR|SSE|Server-Sent Events
+TR|TLS|Transport Layer Security
+TR|UTC|Coordinated Universal Time
+TR|WCF|Windows Communication Foundation
+TR|XML|Extensible Markup Language
+ENDTABLE|
+SB|
+H1|Uvod
+P|Savremene veb aplikacije sve češće se ne razvijaju kao jedan monolitan program koji se izvršava na jednom serveru, već kao skup međusobno nezavisnih servisa koji se izvršavaju u oblaku ({i}cloud{/i}). Takav pristup omogućava da se pojedini delovi sistema nezavisno skaliraju, nadgledaju i zamenjuju, ali istovremeno uvodi nove probleme: kako servisi međusobno komuniciraju, kako se stanje deli između njih i kako se korisniku obezbedi brz odziv iako je obrada raspoređena na više fizičkih mašina.
+P|Predmet ovog rada je razvoj veb aplikacije za deljenje i diskutovanje sadržaja, po ugledu na platformu {i}Reddit{/i}, koja je u celini realizovana na platformi Microsoft Azure kao skup zasebnih uloga ({i}roles{/i}) u okviru jednog {i}cloud{/i} servisa. Aplikacija korisnicima omogućava registraciju, objavljivanje tema sa slikama, glasanje, komentarisanje i pretplatu na teme, uz automatsko obaveštavanje pretplatnika elektronskom poštom i kontinuirano nadgledanje dostupnosti servisa.
+P|Rad je realizovan u dve faze. Prva faza obuhvata osnovni projekat, odnosno {i}Reddit{/i} aplikaciju sa pratećim servisima za obaveštavanje i nadzor dostupnosti. Druga faza predstavlja nadogradnju osnovnog projekta modulom za razmenu privatnih poruka u realnom vremenu, koji je urađen kao dodatni deo predmetnih obaveza.
+H2|Predmet i cilj rada
+P|Osnovni problem koji rad rešava može se posmatrati kroz dva sloja. Prvi sloj je funkcionalan: potrebno je izgraditi aplikaciju koja podržava sve uobičajene radnje na platformi za deljenje sadržaja, pri čemu podaci moraju biti trajno sačuvani, slike dostupne preko javnih adresa, a obaveštavanje pretplatnika ne sme blokirati korisnički interfejs.
+P|Drugi sloj je arhitekturni i predstavlja pravi cilj rada: pokazati kako se opisana funkcionalnost dekomponuje na uloge u oblaku i kojim mehanizmima se te uloge povezuju. U radu su primenjena tri različita obrasca komunikacije, svaki tamo gde mu je mesto. Asinhrona komunikacija preko reda poruka ({i}message queue{/i}) korišćena je za obaveštavanje elektronskom poštom, jer taj posao može da traje i ne sme da zadržava korisnika. Sinhroni RPC (Remote Procedure Call) nad WCF kanalom korišćen je za proveru dostupnosti servisa, jer se tu očekuje trenutan odgovor ili greška. Trajna dvosmerna konekcija sa serverskim potiskivanjem ({i}server push{/i}) korišćena je za razmenu poruka u realnom vremenu, jer je jedino ona u stanju da poruku dostavi primaocu bez njegovog zahteva.
+P|Poseban cilj druge faze bio je da se pokaže razlika između klasičnog zahtev-odgovor modela, na kome počiva cela prva faza, i modela u kome server aktivno obaveštava klijenta o promeni. Bez tog mehanizma, prikaz nove poruke zahtevao bi periodično ispitivanje servera ({i}polling{/i}), što nepotrebno troši resurse i unosi kašnjenje.
+H2|Struktura rada
+P|Nakon uvodnog poglavlja, u poglavlju 2 dat je pregled svih korišćenih tehnologija i alata, sa obrazloženjem zašto je pojedina tehnologija izabrana i koje su njene bitne prednosti u kontekstu ovog rešenja. Poglavlje 3 predstavlja jezgro rada: u njemu su opisani tok praktičnog dela, arhitektura sistema, struktura baze podataka, obe faze razvoja sa relevantnim delovima programskog koda, prikaz ključnih ekrana i analiza performansi rešenja. U poglavlju 4 izvedeni su zaključci i navedeni predlozi za dalja usavršavanja. Na kraju su dati spisak literature i spisak korišćenih slika i tabela.
+SB|
+H1|Opis korišćenih tehnologija i alata
+P|Izbor tehnologija u ovom radu vođen je jednim ograničenjem i jednim zahtevom. Ograničenje je bilo da se ceo sistem izvršava kao {i}Microsoft Azure Cloud Service{/i} sa jasno razdvojenim ulogama, što unapred određuje platformu i model isporuke. Zahtev je bio da komunikacija između delova sistema bude realizovana različitim mehanizmima, primerenim prirodi posla koji obavljaju. U nastavku su tehnologije grupisane po sloju u kome se koriste.
+H2|Platforma i izvršno okruženje
+P|Ceo sistem razvijen je na platformi {i}.NET Framework{/i} 4.7.2 i isporučuje se kao {i}Azure Cloud Service{/i} (klasični model, poznat i kao {i}Platform as a Service{/i} model prve generacije). Ovaj model isporuke izabran je jer uvodi pojam uloge ({i}role{/i}) kao osnovne jedinice izvršavanja i skaliranja, što se savršeno poklapa sa ciljem rada da se sistem dekomponuje na nezavisne servise.
+P|Postoje dve vrste uloga i obe su iskorišćene. {i}Web role{/i} je uloga koja se izvršava pod IIS-om i prihvata dolazne HTTP zahteve, pa je primerena delovima sistema koji imaju korisnički interfejs. {i}Worker role{/i} je uloga bez veb servera, koja se ponaša kao pozadinski proces sa beskonačnom petljom, i primerena je poslovima koji se izvršavaju bez interakcije korisnika. Prednost ovakve podele je što se broj instanci svake uloge zadaje nezavisno, u konfiguracionoj datoteci, bez izmene programskog koda.
+P|Struktura {i}cloud{/i} servisa opisana je u dvema datotekama. Datoteka {c}ServiceDefinition.csdef{/c} definiše koje uloge postoje, kojim mrežnim priključcima ({i}endpoints{/i}) su izložene i koje konfiguracione parametre očekuju, dok datoteka {c}ServiceConfiguration.cscfg{/c} sadrži konkretne vrednosti tih parametara i broj instanci. Ovo razdvajanje je bitna prednost platforme, jer omogućava da se ista binarna isporuka pokrene lokalno nad emulatorom i u oblaku nad pravim skladištem, samo zamenom konfiguracije.
+H2|Serverske tehnologije
+P|Oba veb dela sistema izgrađena su nad {i}ASP.NET MVC{/i} 5.2.7. Ovaj okvir izabran je zbog jasnog razdvajanja odgovornosti na model, prikaz i kontroler, što je u radu iskorišćeno dosledno: klase modela su ujedno i entiteti koji se upisuju u bazu, kontroleri sadrže poslovnu logiku, a prikazi su isključivo prezentacioni sloj. Dodatna prednost je usmeravanje zahteva zasnovano na konvenciji, pri čemu adresa {c}/Chat/SendMessage{/c} automatski odgovara metodi {c}SendMessage{/c} u klasi {c}ChatController{/c}, bez ikakve dodatne konfiguracije.
+P|Za generisanje HTML-a korišćen je {i}Razor{/i} 3.2.7, mehanizam šablona koji omogućava mešanje C# izraza i HTML oznaka u istoj datoteci sa ekstenzijom {c}.cshtml{/c}. Njegova prednost je što se model prikaza prosleđuje tipizirano, pa se greške u imenima svojstava otkrivaju već pri prevođenju.
+P|Za proveru dostupnosti servisa korišćen je {i}WCF{/i} (Windows Communication Foundation) sa vezom {c}NetTcpBinding{/c}. WCF je izabran jer omogućava da se ugovor o usluzi definiše kao obična C# interfejsna deklaracija, označena atributima {c}ServiceContract{/c} i {c}OperationContract{/c}, nakon čega okvir sam generiše posrednika ({i}proxy{/i}) za poziv na daljinu. Veza {c}NetTcpBinding{/c} izabrana je namerno umesto HTTP veze, jer koristi binarno kodiranje poruka nad TCP protokolom, pa ima znatno manje režijsko opterećenje od SOAP poruka nad HTTP-om, a sva komunikacija se odvija unutar granica {i}cloud{/i} servisa gde interoperabilnost sa drugim platformama nije potrebna.
+P|{i}OWIN{/i} (Open Web Interface for .NET) je specifikacija koja razdvaja veb aplikaciju od veb servera na kome se izvršava, uvođenjem jedinstvenog apstraktnog sloja za obradu zahteva. U ovom radu OWIN nije korišćen za celu aplikaciju, već isključivo kao mehanizam kroz koji se u obradu zahteva ubacuje SignalR, o čemu je detaljnije pisano u tački 3.5.
+H2|Tehnologije za skladištenje podataka
+P|Za trajno čuvanje podataka korišćen je {i}Azure Storage{/i}, i to sve tri njegove usluge, svaka za tip podatka kome najbolje odgovara.
+P|{i}Azure Table Storage{/i} je NoSQL skladište tipa ključ-vrednost, u kome se svaki zapis ({i}entity{/i}) jednoznačno određuje parom ključeva. Prvi ključ, {c}PartitionKey{/c}, određuje logičku particiju u kojoj zapis živi i predstavlja jedinicu raspodele podataka po fizičkim serverima. Drugi ključ, {c}RowKey{/c}, jednoznačno određuje zapis unutar particije. Ovo skladište izabrano je zbog dve prednosti. Prva je da ne zahteva unaprede definisanu shemu, pa se svaki zapis može opisati sopstvenim skupom svojstava, što je pogodno u razvoju gde se model menja. Druga, važnija prednost je da je upit koji zadaje oba ključa takozvani {i}point query{/i}, koji se izvršava u praktično konstantnom vremenu nezavisno od ukupne količine podataka. Ta osobina je u radu svesno iskorišćena pri projektovanju ključeva tabele poruka, kako je opisano u tački 3.3.
+P|Glavno ograničenje ovog skladišta je što ne podržava složene tipove kao vrednosti svojstava. Svojstvo može biti samo prost tip, pa se kolekcije moraju ručno pretvoriti u tekstualni zapis pre upisa. U radu je taj problem rešen serijalizacijom u JSON, uz pomoć biblioteke {i}Newtonsoft.Json{/i} 13.0.3.
+P|{i}Azure Blob Storage{/i} je skladište za nestrukturirane binarne podatke. Korišćeno je za slike profila korisnika i slike tema. Izabrano je jer se otpremljena datoteka odmah nakon upisa nalazi na javno dostupnoj adresi, koju je dovoljno upisati u oznaku {c}img{/c} u prikazu, čime se veb uloga potpuno oslobađa posla isporuke slika.
+P|{i}Azure Queue Storage{/i} je usluga reda poruka koja obezbeđuje da poruku preuzme tačno jedan potrošač, uz mehanizam nevidljivosti poruke tokom obrade i njeno vraćanje u red ako obrada ne uspe. Ova usluga je u radu ključna za razdvajanje ({i}decoupling{/i}) veb uloge i uloge za obaveštavanje: veb uloga samo ostavi poruku u red i odmah vrati odgovor korisniku, dok slanje elektronske pošte, koje može trajati sekundama, obavlja pozadinska uloga u svom ritmu.
+H2|Tehnologija za komunikaciju u realnom vremenu
+P|Za drugu fazu rada, odnosno za razmenu poruka u realnom vremenu, izabran je okvir {i}ASP.NET SignalR{/i} 2.4.3. Radi se o klasičnoj, takozvanoj {i}full-framework{/i} verziji okvira, koja se izvršava u okviru same veb uloge, a ne o zasebnoj usluzi {i}Azure SignalR Service{/i} niti o direktnom programiranju nad {i}WebSocket{/i} protokolom.
+P|Odluka da se ne programira direktno nad {i}WebSocket{/i} protokolom donesena je zbog najvažnije prednosti SignalR-a, a to je pregovaranje o transportu ({i}transport negotiation{/i}). Pri uspostavljanju konekcije, okvir sam ispituje mogućnosti klijenta i mreže i bira najbolji dostupni transport, u sledećem redosledu: {i}WebSocket{/i}, zatim {i}Server-Sent Events{/i}, zatim {i}forever frame{/i} i, kao poslednju mogućnost, dugo ispitivanje ({i}long polling{/i}). Za programera je taj izbor nevidljiv, jer je programski model isti bez obzira na izabrani transport. Time se aplikacija automatski prilagođava okruženjima u kojima posrednički serveri ne propuštaju nadogradnju konekcije na {i}WebSocket{/i}, bez ijedne linije dodatnog koda.
+P|Druga bitna prednost je apstrakcija {i}huba{/i}, koja komunikaciju svodi na pozivanje metoda umesto na razmenu poruka. Server poziva metodu definisanu na klijentu kao da je lokalna, a okvir se stara o serijalizaciji argumenata u JSON i njihovom prenosu. Uz to, SignalR uvodi pojam grupe ({i}group{/i}), odnosno imenovanog skupa konekcija, što je u ovom radu iskorišćeno za adresiranje poruka konkretnom korisniku bez vođenja sopstvene evidencije aktivnih konekcija.
+P|Treća prednost je automatsko ponovno povezivanje. Ako se konekcija prekine, klijentska biblioteka je sama obnavlja, a na serveru se poziva metoda {c}OnReconnected{/c}, u kojoj je moguće vratiti konekciju u grupe kojima je pripadala. Bez toga bi svaki kratkotrajan prekid mreže tiho isključio korisnika iz razgovora.
+H2|Klijentske tehnologije
+P|Korisnički interfejs izgrađen je pomoću okvira {i}Bootstrap{/i} 3.4.1, koji je izabran zbog gotovog sistema mreže ({i}grid{/i}) i skupa stilizovanih komponenata, čime je dobijen prilagodljiv ({i}responsive{/i}) prikaz bez pisanja CSS-a od nule. Za rad sa DOM-om i asinhrone HTTP zahteve korišćena je biblioteka {i}jQuery{/i} 3.4.1, koja je ujedno i obavezna zavisnost klijentskog dela SignalR-a.
+P|Za prikaz nenametljivih obaveštenja korišćena je biblioteka {i}toastr{/i} 2.1.1. Ona je u drugoj fazi rada dobila konkretnu ulogu: kada poruka stigne u razgovor koji korisnik trenutno ne gleda, obaveštenje se prikazuje kao kratkotrajni iskačući prozor u uglu ekrana, bez prekidanja rada.
+P|Za prikaz procenta dostupnosti servisa korišćena je biblioteka {i}Chart.js{/i}, preuzeta preko javnog CDN-a (Content Delivery Network), koja omogućava crtanje kružnog dijagrama nad podacima prosleđenim iz modela prikaza.
+H2|Razvojni alati
+P|Razvoj je obavljen u okruženju {i}Microsoft Visual Studio{/i} uz instaliran {i}Azure SDK{/i}, koji obezbeđuje projektni tip {i}cloud{/i} servisa, prevođenje isporuke u paket i pokretanje celog sistema nad lokalnim emulatorom. Zavisnostima se upravlja preko {i}NuGet{/i} paketa, a njihov spisak sa tačnim verzijama nalazi se u datotekama {c}packages.config{/c} u svakom projektu.
+P|Tokom razvoja sve tri usluge skladišta zamenjene su lokalnim {i}Azure Storage Emulator{/i}-om, što se u konfiguraciji postiže vrednošću {c}UseDevelopmentStorage=true{/c} parametra {c}DataConnectionString{/c}. Zahvaljujući tome, razvoj i ispitivanje nisu zahtevali stvarni pretplatnički račun u oblaku ni mrežnu povezanost. Za pregled i izmenu sadržaja tabela, {i}blob{/i} kontejnera i redova poruka korišćen je alat {i}Azure Storage Explorer{/i}.
+P|U tabeli 2.1 dat je sažet pregled svih korišćenih tehnologija sa verzijama i njihovom ulogom u rešenju.
+TABCAP|Tabela 2.1. Pregled korišćenih tehnologija i biblioteka
+TABLE|3
+TR|Tehnologija / biblioteka|Verzija|Uloga u rešenju
+TR|.NET Framework|4.7.2|Izvršno okruženje svih uloga
+TR|Azure Cloud Service (classic)|schema 2015-04.2.6|Model isporuke i dekompozicije na uloge
+TR|ASP.NET MVC|5.2.7|Veb sloj uloga RedditService i HealthStatusService
+TR|ASP.NET Razor|3.2.7|Mehanizam šablona za generisanje HTML-a
+TR|ASP.NET SignalR|2.4.3|Komunikacija u realnom vremenu (druga faza)
+TR|Microsoft.Owin|4.2.3|Sloj kroz koji se SignalR uključuje u obradu zahteva
+TR|WindowsAzure.Storage|9.3.3|Pristup uslugama Table, Blob i Queue
+TR|Newtonsoft.Json|13.0.3|Serijalizacija kolekcija i DTO objekata
+TR|WCF (System.ServiceModel)|deo .NET 4.7.2|RPC provera dostupnosti preko NetTcpBinding
+TR|Bootstrap|3.4.1|Prilagodljiv korisnički interfejs
+TR|jQuery|3.4.1|Rad sa DOM-om, asinhroni zahtevi, osnova SignalR klijenta
+TR|toastr|2.1.1|Nenametljiva obaveštenja o novim porukama
+TR|Chart.js|CDN|Kružni dijagram dostupnosti servisa
+ENDTABLE|
+SB|
+H1|Opis rešenja problema
+P|U ovom poglavlju opisano je kako su zahtevi iz uvodnog dela prevedeni u radno rešenje. Izlaganje počinje opisom toka praktičnog dela i metodologije rada, nakon čega sledi arhitektura sistema i struktura baze podataka, kao osnova nad kojom su izgrađene obe faze. Zatim su odvojeno opisane prva i druga faza, sa prikazom ključnih delova programskog koda, posle čega su dati prikaz ključnih ekrana i analiza performansi.
+H2|Opis toka praktičnog dela
+P|Rad je organizovan inkrementalno, tako da je na kraju svake etape postojala celina koja se može pokrenuti i ispitati. Takav pristup izabran je svesno, jer je sistem sastavljen od više uloga koje se izvršavaju istovremeno, pa je otkrivanje greške znatno teže ako se više novih delova uvede u isto vreme.
+P|U prvoj etapi postavljen je skelet {i}cloud{/i} servisa. Definisane su četiri uloge u datoteci {c}ServiceDefinition.csdef{/c}, dodeljeni su im mrežni priključci i uveden je zajednički konfiguracioni parametar {c}DataConnectionString{/c}. Ispravnost ove etape proverena je pokretanjem praznih uloga nad emulatorom.
+P|U drugoj etapi izgrađen je sloj pristupa podacima. Za svaki entitet napravljena je klasa modela, izvedena iz osnovne klase {c}TableEntity{/c}, i odgovarajuća klasa repozitorijuma koja objedinjuje sve operacije nad jednom tabelom. Odmah je uveden i obrazac da svaki repozitorijum u svom konstruktoru poziva metodu {c}CreateIfNotExists{/c}, čime je uklonjena potreba za bilo kakvim ručnim pripremanjem baze pre prvog pokretanja.
+P|U trećoj etapi realizovana je osnovna funkcionalnost {i}Reddit{/i} aplikacije, i to u redosledu koji prati zavisnosti: najpre registracija i prijava, jer sve ostalo zahteva prijavljenog korisnika, zatim objavljivanje tema sa otpremanjem slike u {i}blob{/i} skladište, pa glasanje, komentarisanje i pretplata, i na kraju pretraga i sortiranje.
+P|U četvrtoj etapi uvedena je asinhrona obrada. Postavljanje komentara je prošireno tako da pored upisa u bazu ostavi poruku u redu {c}notification{/c}, a uloga {c}NotificationService{/c} je izgrađena kao pozadinski proces koji taj red neprekidno prazni i pretplatnicima šalje elektronsku poštu. Ispravnost je proverena posmatranjem dužine reda u alatu {i}Azure Storage Explorer{/i} i sadržaja datoteke dnevnika {c}EmailLogFile.txt{/c}.
+P|U petoj etapi realizovan je nadzor dostupnosti. Definisan je WCF ugovor {c}IHealthMonitoring{/c} u zajedničkoj biblioteci {c}Common{/c}, nakon čega je uloga {c}HealthMonitoringService{/c} dobila petlju koja svakih pet sekundi proverava dostupnost i rezultat upisuje u tabelu, dok je uloga {c}HealthStatusService{/c} izgrađena kao nadzorna tabla nad tim podacima.
+P|Šesta etapa predstavlja drugu fazu rada, odnosno nadogradnju modulom za razmenu poruka u realnom vremenu. Ona je namerno izvedena kao dodatak koji ne menja ni jednu postojeću klasu prve faze: dodati su novi model, novi repozitorijum, novi kontroler, nova klasa {i}huba{/i} i nov prikaz, dok je jedina izmena u postojećem kodu dodavanje stavke {i}Chat{/i} u navigacionu traku zajedničkog izgleda. Ovakav način uvođenja nadogradnje dodatno potvrđuje da je početna dekompozicija bila ispravna.
+P|Ispitivanje je tokom celog rada obavljano ručno, nad lokalnim emulatorom skladišta. Ponašanje u realnom vremenu proveravano je otvaranjem dva odvojena prozora pregledača, u različitim sesijama, sa dva prijavljena korisnika, pri čemu je posmatrano da li poruka poslata u jednom prozoru stiže u drugi bez osvežavanja stranice, i da li se izmena i brisanje poruke odražavaju kod oba učesnika.
+H2|Arhitektura sistema
+P|Sistem je dekomponovan na četiri uloge koje se izvršavaju istovremeno u okviru jednog {i}cloud{/i} servisa i međusobno komuniciraju isključivo preko usluga skladišta i mrežnih priključaka, bez direktnih poziva u zajedničkom procesu. Na slici 3.1 prikazana je celokupna arhitektura rešenja, sa naznačenim protokolima kojima se pojedini delovi povezuju.
+IMG|arhitektura.png|16.0
+FIGCAP|Slika 3.1. Arhitektura sistema sa prikazom uloga, protokola i usluga skladišta
+H3|Uloge u okviru cloud servisa
+P|Uloga {c}RedditService{/c} je {i}web role{/i} i predstavlja jedini deo sistema sa kojim korisnik neposredno radi. U njoj se nalaze kontroleri {c}HomeController{/c}, {c}RegistrationController{/c} i {c}ChatController{/c}, klase modela i repozitorijuma, kao i klasa {i}huba{/i} {c}ChatHub{/c} uvedena u drugoj fazi. Uloga je izložena na priključku 80 za HTTP saobraćaj.
+P|Uloga {c}NotificationService{/c} je {i}worker role{/i} bez korisničkog interfejsa. Njena metoda {c}Run{/c} sadrži beskonačnu petlju koja preuzima poruke iz reda {c}notification{/c}, za svaku poruku pronalazi odgovarajuću temu i komentar i svim pretplatnicima te teme šalje elektronsku poštu preko SMTP servera, nakon čega poruku briše iz reda.
+P|Uloga {c}HealthMonitoringService{/c} je takođe {i}worker role{/i} i zadužena je za proveru dostupnosti. U metodi {c}OnStart{/c} ona pokreće dva WCF servisna domaćina ({i}service host{/i}), na priključcima 8080 i 8081, koji izlažu ugovor {c}IHealthMonitoring{/c}. Zatim u svom radnom ciklusu, na svakih pet sekundi, pomoću fabrike kanala ({c}ChannelFactory{/c}) pokušava da uspostavi posrednika prema oba priključka i ishod upisuje u tabelu {c}HealthCheck{/c}.
+P|Uloga {c}HealthStatusService{/c} je druga {i}web role{/i} i predstavlja nadzornu tablu. Izložena je na priključku 8082 i prikazuje procenat dostupnosti u poslednja 24 sata i u poslednja tri sata, zajedno sa tabelarnim pregledom svih pojedinačnih provera.
+P|Projekat {c}Common{/c} nije uloga, već biblioteka klasa koja sadrži isključivo deljeni WCF ugovor {c}IHealthMonitoring{/c}. Njegovo postojanje je neophodno da bi i strana koja izlaže uslugu i strana koja je poziva radile nad istim tipom.
+H3|Konfiguracija uloga i mrežnih priključaka
+P|Sve uloge, njihovi priključci i očekivani konfiguracioni parametri opisani su u datoteci {c}ServiceDefinition.csdef{/c}. Isečak koji sledi prikazuje definiciju veb uloge sa dva priključka i definiciju jedne radne uloge.
+CODE|<WebRole name="RedditService" vmsize="Standard_D1_v2">
+CODE|  <Sites>
+CODE|    <Site name="Web">
+CODE|      <Bindings><Binding name="Endpoint1" endpointName="Endpoint1" /></Bindings>
+CODE|    </Site>
+CODE|  </Sites>
+CODE|  <ConfigurationSettings>
+CODE|    <Setting name="DataConnectionString" />
+CODE|  </ConfigurationSettings>
+CODE|  <Endpoints>
+CODE|    <InputEndpoint name="Endpoint1" protocol="http" port="80" />
+CODE|    <InputEndpoint name="RedditeService" protocol="tcp" port="8080" />
+CODE|  </Endpoints>
+CODE|</WebRole>
+CODE|<WorkerRole name="NotificationService" vmsize="Standard_D1_v2">
+CODE|  <ConfigurationSettings>
+CODE|    <Setting name="DataConnectionString" />
+CODE|  </ConfigurationSettings>
+CODE|  <Endpoints>
+CODE|    <InputEndpoint name="NotificationService" protocol="tcp" port="8081" />
+CODE|  </Endpoints>
+CODE|</WorkerRole>
+P|Konkretne vrednosti parametara i broj instanci svake uloge zadaju se u datoteci {c}ServiceConfiguration.Local.cscfg{/c}. Sve četiri uloge u ovom radu pokreću se u po jednoj instanci i usmerene su na lokalni emulator skladišta, što je prikazano isečkom koji sledi. Posledice ove odluke na skalabilnost razmotrene su u tački 3.7.
+CODE|<Role name="RedditService">
+CODE|  <Instances count="1" />
+CODE|  <ConfigurationSettings>
+CODE|    <Setting name="DataConnectionString" value="UseDevelopmentStorage=true" />
+CODE|  </ConfigurationSettings>
+CODE|</Role>
+P|Pregled svih uloga sa njihovim tipom, priključcima i odgovornostima dat je u tabeli 3.1.
+TABCAP|Tabela 3.1. Pregled uloga u okviru cloud servisa
+TABLE|4
+TR|Uloga|Tip|Priključci|Odgovornost
+TR|RedditService|Web role|HTTP 80, TCP 8080|Korisnički interfejs, poslovna logika, SignalR hub
+TR|NotificationService|Worker role|TCP 8081|Obrada reda poruka i slanje elektronske pošte
+TR|HealthMonitoringService|Worker role|nema izloženih|Provera dostupnosti i upis rezultata
+TR|HealthStatusService|Web role|HTTP 8082|Nadzorna tabla dostupnosti
+ENDTABLE|
+H2|Struktura baze podataka
+P|Podaci se čuvaju u {i}Azure Table Storage{/i} skladištu, u četiri tabele. Pošto je reč o NoSQL skladištu, između tabela ne postoje ograničenja referencijalnog integriteta ni operacije spajanja ({i}join{/i}), pa je povezivanje podataka rešeno na dva načina: čuvanjem adrese elektronske pošte kao logičkog ključa u više tabela i ugnežđivanjem kolekcija u serijalizovanom obliku unutar samog zapisa. Pregled tabela sa njihovim ključevima dat je u tabeli 3.2.
+TABCAP|Tabela 3.2. Pregled tabela u Azure Table Storage skladištu
+TABLE|4
+TR|Tabela|PartitionKey|RowKey|Sadržaj
+TR|UsersTable|konstanta "User"|adresa e-pošte|Registrovani korisnici
+TR|TopicTable|konstanta "Topic"|celobrojni redni broj teme|Teme sa komentarima i glasovima
+TR|MessagesTable|identifikator razgovora|GUID poruke|Privatne poruke (druga faza)
+TR|HealthCheck|konstanta "AvailabilityServices"|vremenska oznaka provere|Dnevnik provera dostupnosti
+ENDTABLE|
+H3|Tabela korisnika
+P|Klasa {c}User{/c} izvedena je iz klase {c}TableEntity{/c} i u konstruktoru postavlja {c}PartitionKey{/c} na konstantnu vrednost {i}User{/i}, dok se kao {c}RowKey{/c} pri registraciji upisuje adresa elektronske pošte. Time je adresa e-pošte istovremeno i prirodni ključ, pa provera da li korisnik već postoji svodi se na jedan upit po ključu. Struktura tabele data je u tabeli 3.3.
+TABCAP|Tabela 3.3. Struktura tabele UsersTable
+TABLE|3
+TR|Svojstvo|Tip|Opis
+TR|PartitionKey|string|Konstantna vrednost "User"
+TR|RowKey|string|Adresa elektronske pošte, prirodni ključ
+TR|Name, Lastname|string|Ime i prezime korisnika
+TR|Address, City, Country|string|Podaci o adresi
+TR|PhoneNumber|string|Broj telefona
+TR|Email|string|Adresa elektronske pošte
+TR|Password|string|Lozinka korisnika
+TR|PhotoUrl, ThumbnailUrl|string|Adrese slike profila u blob skladištu
+TR|SerializedTopics|string|JSON zapis liste tema koje je korisnik objavio
+ENDTABLE|
+H3|Tabela tema
+P|Klasa {c}Topic{/c} predstavlja objavljenu temu i u sebi nosi četiri kolekcije: listu komentara, listu pretplatnika, listu korisnika koji su glasali potvrdno i listu korisnika koji su glasali odrično. Pošto skladište ne podržava složene tipove, svaka od tih kolekcija ima pridruženo svojstvo tipa {c}string{/c} koje u geteru serijalizuje kolekciju u JSON, a u seteru je iz JSON-a obnavlja. Isečak koji sledi prikazuje taj obrazac.
+CODE|public class Topic : TableEntity
+CODE|{
+CODE|    public int Id { get; set; } = 1;
+CODE|    public string Author { get; set; }
+CODE|    public string Title { get; set; }
+CODE|    public int NumberUpVote { get; set; }
+CODE|    public int NumberDownVote { get; set; }
+CODE|
+CODE|    [JsonIgnore] public List<Comment> Comments { get; set; }
+CODE|    [JsonIgnore] public List<string> Subscribes { get; set; }
+CODE|
+CODE|    public Topic() { PartitionKey = "Topic"; RowKey = ""; }
+CODE|
+CODE|    public string SerializedComments
+CODE|    {
+CODE|        get => JsonConvert.SerializeObject(Comments);
+CODE|        set => Comments = JsonConvert.DeserializeObject<List<Comment>>(value);
+CODE|    }
+CODE|}
+P|Atribut {c}JsonIgnore{/c} nad samim kolekcijama je pritom neophodan, jer bi bez njega serijalizacija liste tema unutar korisnika povlačila i celo podstablo komentara i glasova, što bi vodilo u nepotrebno umnožavanje podataka. Struktura tabele data je u tabeli 3.4.
+TABCAP|Tabela 3.4. Struktura tabele TopicTable
+TABLE|3
+TR|Svojstvo|Tip|Opis
+TR|PartitionKey|string|Konstantna vrednost "Topic"
+TR|RowKey|string|Redni broj teme, jednak svojstvu Id
+TR|Id|int|Celobrojni identifikator teme
+TR|Author|string|Adresa e-pošte autora teme
+TR|Title, Description|string|Naslov i opis teme
+TR|ImageUrl, ThumbnailUrl|string|Adresa slike teme u blob skladištu
+TR|NumberUpVote, NumberDownVote|int|Brojači potvrdnih i odričnih glasova
+TR|SerializedListUpVoteUser|string|JSON lista korisnika koji su glasali potvrdno
+TR|SerializedListDownVoteUser|string|JSON lista korisnika koji su glasali odrično
+TR|SerializedComments|string|JSON lista komentara na temu
+TR|SerializedSubscribes|string|JSON lista pretplatnika na temu
+ENDTABLE|
+H3|Tabela poruka
+P|Tabela {c}MessagesTable{/c} uvedena je u drugoj fazi rada i njen dizajn ključeva je najvažnija projektantska odluka u celom skladištu, pa je detaljno obrazložena u tački 3.5.4. Struktura tabele data je u tabeli 3.5.
+TABCAP|Tabela 3.5. Struktura tabele MessagesTable
+TABLE|3
+TR|Svojstvo|Tip|Opis
+TR|PartitionKey|string|Identifikator razgovora, dve adrese e-pošte spojene znakom {PIPE}
+TR|RowKey|string|GUID poruke, jednoznačan identifikator za izmenu i brisanje
+TR|Sender|string|Adresa e-pošte pošiljaoca
+TR|Receiver|string|Adresa e-pošte primaoca
+TR|Content|string|Tekst poruke
+TR|SentAt|DateTime|Vreme slanja poruke u UTC vremenskoj zoni
+TR|IsEdited|bool|Oznaka da je poruka naknadno izmenjena
+ENDTABLE|
+H3|Tabela provera dostupnosti
+P|Tabela {c}HealthCheck{/c} ima jednu jedinu particiju, sa konstantnim ključem {i}AvailabilityServices{/i}, dok se kao {c}RowKey{/c} upisuje vremenska oznaka provere u formatu {c}yyyy-MM-dd-HH:mm:ss{/c}. Svojstvo {c}Status{/c} sadrži spojenu vrednost vremenske oznake i ishoda, oblika {c}2026-09-17-14:32:05_OK{/c}, koju nadzorna tabla razlaže radi izračunavanja procenta dostupnosti.
+H3|Blob i Queue skladište
+P|Pored tabela, sistem koristi jedan {i}blob{/i} kontejner pod imenom {c}photo{/c}, u koji se otpremaju slike profila i slike tema. Ime {i}bloba{/i} izvodi se iz podatka koji ga određuje, na primer spajanjem naslova teme i sufiksa {i}Photo{/i}, a dobijena adresa se upisuje u svojstvo {c}ImageUrl{/c} odgovarajućeg zapisa.
+P|Red poruka pod imenom {c}notification{/c} služi za prenos zahteva za obaveštavanje. Telo poruke je namerno svedeno na najmanju moguću meru, na dva celobrojna identifikatora spojena znakom {PIPE}, u obliku {c}topicId{PIPE}commentId{/c}. Takav izbor je svestan: u red se ne upisuje sadržaj komentara, već samo pokazivač na njega, pa uloga za obaveštavanje uvek radi sa trenutnim stanjem baze, a red ostaje mali i brz.
+H2|Prva faza: Reddit aplikacija
+P|Prva faza obuhvata osnovni projekat sa svim funkcionalnostima platforme za deljenje sadržaja, kao i dve prateće uloge za asinhrono obaveštavanje i nadzor dostupnosti.
+H3|Registracija i prijava korisnika
+P|Registracija se obavlja slanjem obrasca sa podacima o korisniku i slikom profila. Kontroler {c}RegistrationController{/c} najpre otprema sliku u {i}blob{/i} kontejner, pa proverava da li adresa e-pošte već postoji i, ako ne postoji, upisuje novog korisnika u tabelu. Prijava se obavlja poređenjem lozinke, nakon čega se ceo objekat korisnika čuva u sesiji pod ključem {c}LoggedInUser{/c}, kako je prikazano u isečku koji sledi.
+CODE|User user = allUsers.FirstOrDefault(u => u.Email == email);
+CODE|
+CODE|if (user == null)
+CODE|    ViewBag.ErrorEmail = "Invalid email";
+CODE|else if (user.Password != password)
+CODE|    ViewBag.ErrorPass = "Invalid password";
+CODE|else
+CODE|{
+CODE|    Session["LoggedInUser"] = user;
+CODE|    TempData["SuccessMessage"] = "You logged in successfully";
+CODE|    return RedirectToAction("Index", "Home");
+CODE|}
+P|Sesija je u ovom rešenju ujedno i mehanizam autorizacije: svaka akcija koja zahteva prijavljenog korisnika počinje čitanjem tog ključa i preusmerava na stranu za prijavu ako je vrednost prazna. Ograničenja ovakvog pristupa razmotrena su u tački 3.7 i u zaključku.
+H3|Objavljivanje tema
+P|Pri objavljivanju nove teme, slika se najpre otprema u {i}blob{/i} skladište, a zatim se novoj temi dodeljuje redni broj kao sledeći slobodan celi broj. Novi zapis se upisuje u tabelu tema i istovremeno dodaje u listu tema prijavljenog korisnika, kako bi korisnik na strani za uređivanje profila video i mogao da briše sopstvene teme.
+CODE|CloudBlobContainer container = blobStorage.GetContainerReference("photo");
+CODE|CloudBlockBlob blob = container.GetBlockBlobReference(t.Title + "Photo");
+CODE|blob.Properties.ContentType = image.ContentType;
+CODE|blob.UploadFromStream(image.InputStream);
+CODE|
+CODE|int RowKeyValue = allTopics.Count == 0 ? 1 : allTopics.Max(x => x.Id) + 1;
+CODE|Topic newTopic = new Topic()
+CODE|{
+CODE|    RowKey = RowKeyValue.ToString(),
+CODE|    Id = RowKeyValue,
+CODE|    Author = loggedInUser.Email,
+CODE|    ImageUrl = blob.Uri.ToString()
+CODE|};
+CODE|topicDataRepository.AddTopic(newTopic);
+H3|Glasanje
+P|Glasanje je realizovano tako da svaki korisnik može imati najviše jedan glas po temi. Pored brojača glasova, tema nosi i listu adresa e-pošte korisnika koji su glasali, što omogućava tri ponašanja: ponovni pritisak na isti glas poništava prethodni glas, pritisak na suprotni glas premešta glas iz jedne liste u drugu, a prvi pritisak glas samo dodaje. Isečak koji sledi prikazuje logiku potvrdnog glasa.
+CODE|if (topic.ListUpVoteUser.Contains(email))
+CODE|{
+CODE|    topic.ListUpVoteUser.Remove(email);
+CODE|    topic.NumberUpVote--;
+CODE|}
+CODE|else
+CODE|{
+CODE|    if (topic.ListDownVoteUser.Contains(email))
+CODE|    {
+CODE|        topic.ListDownVoteUser.Remove(email);
+CODE|        topic.NumberDownVote--;
+CODE|    }
+CODE|    topic.ListUpVoteUser.Add(email);
+CODE|    topic.NumberUpVote++;
+CODE|}
+CODE|topicDataRepository.UpdateTopic(topic);
+P|Vođenje i brojača i liste glasača predstavlja svesnu denormalizaciju. Brojač je izvodljiv iz dužine liste, ali njegovo čuvanje uklanja potrebu da se lista razlaže iz JSON zapisa samo radi prikaza broja glasova na početnoj strani.
+H3|Komentarisanje i pretplata
+P|Pretplata na temu dodaje adresu e-pošte prijavljenog korisnika u listu pretplatnika te teme. Postavljanje komentara je najvažnija akcija prve faze, jer je jedina koja pokreće asinhronu obradu. Nakon što se komentar upiše u temu, u red {c}notification{/c} se ostavlja poruka sa identifikatorima teme i komentara, čime se posao slanja elektronske pošte prenosi na pozadinsku ulogu, a korisnik odmah dobija odgovor.
+CODE|comment.Id = topic.Comments.Count == 0 ? 1 : topic.Comments.Max(c => c.Id) + 1;
+CODE|topic.Comments.Add(comment);
+CODE|topicDataRepository.UpdateTopic(topic);
+CODE|
+CODE|CloudQueueClient queueClient = storageAccount.CreateCloudQueueClient();
+CODE|CloudQueue queue = queueClient.GetQueueReference("notification");
+CODE|queue.CreateIfNotExists();
+CODE|CloudQueueMessage message =
+CODE|    new CloudQueueMessage(topicId.ToString() + "|" + comment.Id.ToString());
+CODE|queue.AddMessage(message);
+H3|Pretraga i sortiranje
+P|Pretraga tema po naslovu izvedena je poređenjem koje ne razlikuje veliko i malo pismo, pomoću metode {c}IndexOf{/c} sa opcijom {c}OrdinalIgnoreCase{/c}, dok sortiranje podržava tri kriterijuma: najnovije teme, teme sa najviše potvrdnih glasova i teme sa najviše odričnih glasova. Obe operacije izvršavaju se u memoriji veb uloge, nad prethodno pročitanom celom particijom tema, jer {i}Azure Table Storage{/i} ne podržava ni pretragu po delu teksta ni sortiranje po svojstvu koje nije ključ. Posledice tog ograničenja razmotrene su u tački 3.7.
+H3|Asinhrono obaveštavanje putem reda poruka
+P|Uloga {c}NotificationService{/c} u svojoj metodi {c}Run{/c} neprekidno preuzima poruke iz reda, razlaže ih po znaku {PIPE} i za dobijenu temu i komentar šalje elektronsku poštu svim pretplatnicima, nakon čega poruku briše iz reda.
+CODE|CloudQueue queue = AzureQueueService.GetQueueReference("notification");
+CODE|
+CODE|while (true)
+CODE|{
+CODE|    try
+CODE|    {
+CODE|        CloudQueueMessage message = queue.GetMessage();
+CODE|        if (message != null)
+CODE|        {
+CODE|            string[] MessageParts = message.AsString.Split('|');
+CODE|            int topicId = int.Parse(MessageParts[0]);
+CODE|            int commentId = int.Parse(MessageParts[1]);
+CODE|            ProcessNotification(topicId, commentId);
+CODE|            queue.DeleteMessage(message);
+CODE|        }
+CODE|    }
+CODE|    catch (Exception ex)
+CODE|    {
+CODE|        Trace.TraceError("Exception in WorkerRole.RunAsync: " + ex.Message);
+CODE|    }
+CODE|}
+P|Bitno je da se poruka briše iz reda tek nakon uspešne obrade. Ako obrada podigne izuzetak pre brisanja, poruka po isteku vremena nevidljivosti ponovo postaje dostupna i obrada se pokušava iznova, čime se dobija ponašanje sa garancijom isporuke najmanje jednom ({i}at-least-once{/i}). Broj poslatih poruka se, radi provere rada, upisuje u datoteku dnevnika {c}EmailLogFile.txt{/c}.
+H3|Nadzor dostupnosti servisa
+P|Nadzor je realizovan preko WCF ugovora definisanog u zajedničkoj biblioteci {c}Common{/c}. Ugovor je sveden na najmanju moguću meru, na jednu operaciju bez argumenata i bez povratne vrednosti, jer je jedina informacija koja se traži to da li se poziv uopšte može uspostaviti.
+CODE|[ServiceContract]
+CODE|public interface IHealthMonitoring
+CODE|{
+CODE|    [OperationContract]
+CODE|    void IAmAlive();
+CODE|}
+P|Uloga {c}HealthMonitoringService{/c} u metodi {c}OnStart{/c} pokreće dva servisna domaćina nad ovim ugovorom, a zatim u svom radnom ciklusu pomoću fabrike kanala pokušava da uspostavi posrednika prema oba priključka i ishod upisuje u tabelu.
+CODE|var binding = new NetTcpBinding();
+CODE|ChannelFactory<IHealthMonitoring> factory = new ChannelFactory<IHealthMonitoring>(
+CODE|    binding, new EndpointAddress("net.tcp://localhost:8080/HealthMonitoring"));
+CODE|proxyReddit = factory.CreateChannel();
+CODE|IsRedditeServiceActive = proxyReddit != null;
+P|Uloga {c}HealthStatusService{/c} nad upisanim podacima izračunava procenat dostupnosti. Ako je {i}n{/i} ukupan broj provera u posmatranom vremenskom intervalu, a {i}k{/i} broj provera sa ishodom {c}OK{/c}, procenat dostupnosti {i}U{/i} računa se po izrazu (1).
+EQ|U = ( k / n ) · 100 %|1
+P|Nadzorna tabla prikazuje ovaj procenat za dva intervala, za poslednja 24 sata i za poslednja tri sata, kao i tabelarni pregled svih pojedinačnih provera sa vremenom i ishodom. Vrednosti se prikazuju i grafički, kružnim dijagramom nacrtanim bibliotekom {i}Chart.js{/i}.
+H2|Druga faza: nadogradnja chat aplikacijom u realnom vremenu
+P|Druga faza predstavlja nadogradnju osnovnog projekta modulom za razmenu privatnih poruka između dva korisnika u realnom vremenu. Ova tačka detaljno opisuje kako je komunikacija u realnom vremenu implementirana, jer je to i suština nadogradnje.
+H3|Zahtevi nadogradnje i izbor pristupa
+P|Nadogradnja je trebalo da omogući da prijavljeni korisnik izabere sagovornika iz spiska registrovanih korisnika, vidi celu prethodnu prepisku sa njim, pošalje novu poruku, izmeni ili obriše sopstvenu poruku, i da svaka od tih promena bude vidljiva kod sagovornika bez osvežavanja stranice. Dodatno, ako korisnik trenutno gleda drugi razgovor, o novoj poruci treba da bude obavešten nenametljivo.
+P|Zahtev da promena bude vidljiva bez osvežavanja stranice je presudan, jer ga klasičan zahtev-odgovor model ne može ispuniti. U tom modelu razmena podataka počinje isključivo na zahtev klijenta, pa server, koliko god brzo primio novu poruku, nema način da o njoj obavesti primaoca. Jedino rešenje u okviru tog modela bilo bi periodično ispitivanje servera, koje ima dva ozbiljna nedostatka: većina zahteva vraća prazan rezultat i time uzalud troši resurse, a poruka se u najgorem slučaju prikazuje sa kašnjenjem jednakim celom intervalu ispitivanja.
+P|Zbog toga je izabran model sa trajnom konekcijom i serverskim potiskivanjem, realizovan pomoću okvira {i}ASP.NET SignalR{/i} 2.4.3, čije su prednosti obrazložene u tački 2.4. Konkretna realizacija sastoji se od četiri dela: konfiguracije {i}huba{/i} u okviru OWIN sloja, klase {i}huba{/i} koja vodi evidenciju konekcija, serverskih akcija koje posle upisa u bazu potiskuju obaveštenje, i klijentskog koda koji na obaveštenje reaguje.
+H3|Konfiguracija OWIN sloja i mapiranje huba
+P|SignalR se u obradu zahteva uključuje preko OWIN sloja. Za to je dodata klasa {c}Startup{/c}, označena atributom {c}OwinStartup{/c} na nivou sklopa ({i}assembly{/i}), koju paket {c}Microsoft.Owin.Host.SystemWeb{/c} sam pronalazi i poziva pri pokretanju aplikacije. Jedan jedini poziv metode {c}MapSignalR{/c} pritom postavlja dve adrese: {c}/signalr{/c}, preko koje se odvija sav saobraćaj u realnom vremenu, i {c}/signalr/hubs{/c}, koja klijentu vraća automatski generisanog JavaScript posrednika za sve {i}hub{/i} klase u aplikaciji.
+CODE|using Owin;
+CODE|using Microsoft.Owin;
+CODE|
+CODE|[assembly: OwinStartup(typeof(RedditService.Startup))]
+CODE|
+CODE|namespace RedditService
+CODE|{
+CODE|    public class Startup
+CODE|    {
+CODE|        public void Configuration(IAppBuilder app)
+CODE|        {
+CODE|            app.MapSignalR();
+CODE|        }
+CODE|    }
+CODE|}
+H3|Klasa huba i adresiranje poruka pomoću grupa
+P|Klasa {c}ChatHub{/c} izvedena je iz osnovne klase {c}Hub{/c} i njena jedina odgovornost je vođenje evidencije o tome koja konekcija pripada kom korisniku. Problem koji ona rešava je što SignalR svakoj konekciji dodeljuje sopstveni identifikator {c}ConnectionId{/c}, koji se menja pri svakom povezivanju i nema nikakve veze sa identitetom korisnika. Da bi se poruka poslala konkretnom korisniku, potrebna je veza između identiteta i konekcije.
+P|Ta veza je ostvarena mehanizmom grupa. Pri povezivanju, klijent u nizu upita ({i}query string{/i}) prosleđuje svoju adresu e-pošte, a {i}hub{/i} u metodi {c}OnConnected{/c} tekuću konekciju dodaje u grupu čije je ime upravo ta adresa. Time grupa nazvana po adresi e-pošte postaje logička adresa korisnika, nezavisna od broja i trajanja njegovih konekcija.
+CODE|public class ChatHub : Hub
+CODE|{
+CODE|    private string UserEmail
+CODE|    {
+CODE|        get
+CODE|        {
+CODE|            var email = Context.QueryString["userEmail"];
+CODE|            return string.IsNullOrWhiteSpace(email)
+CODE|                ? null : email.Trim().ToLowerInvariant();
+CODE|        }
+CODE|    }
+CODE|
+CODE|    public override Task OnConnected()
+CODE|    {
+CODE|        string email = UserEmail;
+CODE|        if (email != null)
+CODE|            Groups.Add(Context.ConnectionId, email);
+CODE|        return base.OnConnected();
+CODE|    }
+CODE|
+CODE|    public override Task OnReconnected()
+CODE|    {
+CODE|        string email = UserEmail;
+CODE|        if (email != null)
+CODE|            Groups.Add(Context.ConnectionId, email);
+CODE|        return base.OnReconnected();
+CODE|    }
+CODE|
+CODE|    public override Task OnDisconnected(bool stopCalled)
+CODE|    {
+CODE|        string email = UserEmail;
+CODE|        if (email != null)
+CODE|            Groups.Remove(Context.ConnectionId, email);
+CODE|        return base.OnDisconnected(stopCalled);
+CODE|    }
+CODE|}
+P|Ovakvo rešenje ima tri posledice koje su bile i cilj. Prvo, korisnik prijavljen u više prozora pregledača ima više konekcija u istoj grupi, pa poruka stiže u sve prozore istovremeno. Drugo, prekid i ponovno uspostavljanje konekcije ne izbacuje korisnika iz razgovora, jer se metoda {c}OnReconnected{/c} stara o ponovnom pridruživanju grupi. Treće, nigde u aplikaciji ne postoji struktura podataka sa spiskom aktivnih korisnika, jer tu evidenciju u celini vodi sam okvir.
+P|Sva imena grupa se pritom normalizuju metodom {c}ToLowerInvariant{/c}, jer se grupe u SignalR-u adresiraju poređenjem tekstualnih vrednosti, pa bi ista adresa napisana različitim pismom dala dve različite grupe i poruka ne bi bila dostavljena.
+H3|Model poruke i dizajn ključeva
+P|Klasa {c}Message{/c} sadrži najvažniju projektantsku odluku druge faze. Poruke se čuvaju u tabeli {c}MessagesTable{/c}, a kao {c}PartitionKey{/c} koristi se identifikator razgovora, koji se izračunava sortiranjem dveju adresa e-pošte i njihovim spajanjem znakom {PIPE}. Zahvaljujući sortiranju, par adresa daje isti identifikator nezavisno od toga koja je adresa pošiljaoca, pa razgovor između dva korisnika uvek živi u tačno jednoj particiji.
+CODE|public class Message : TableEntity
+CODE|{
+CODE|    public string Sender { get; set; }
+CODE|    public string Receiver { get; set; }
+CODE|    public string Content { get; set; }
+CODE|    public DateTime SentAt { get; set; }
+CODE|    public bool IsEdited { get; set; }
+CODE|
+CODE|    public Message(string sender, string receiver, string content)
+CODE|    {
+CODE|        PartitionKey = BuildConversationId(sender, receiver);
+CODE|        RowKey = Guid.NewGuid().ToString("N");
+CODE|        Sender = sender;
+CODE|        Receiver = receiver;
+CODE|        Content = content;
+CODE|        SentAt = DateTime.UtcNow;
+CODE|        IsEdited = false;
+CODE|    }
+CODE|
+CODE|    public static string BuildConversationId(string emailA, string emailB)
+CODE|    {
+CODE|        string a = (emailA ?? string.Empty).Trim().ToLowerInvariant();
+CODE|        string b = (emailB ?? string.Empty).Trim().ToLowerInvariant();
+CODE|        return string.CompareOrdinal(a, b) <= 0 ? a + "|" + b : b + "|" + a;
+CODE|    }
+CODE|}
+P|Korist od ovakvog izbora je dvostruka. Čitanje celog razgovora je upit nad jednom particijom, koji {i}Azure Table Storage{/i} izvršava sa jednog fizičkog servera i naplaćuje kao jednu operaciju, bez pretraživanja cele tabele. Istovremeno, ako bi se kao {c}PartitionKey{/c} koristila konstanta, sve poruke svih korisnika našle bi se u jednoj particiji, koja bi postala usko grlo sistema, dok bi upotreba adrese samo jednog učesnika zahtevala dva upita i spajanje rezultata u memoriji.
+P|Za {c}RowKey{/c} je izabran GUID, jer poruka mora imati jednoznačan identifikator po kome se kasnije može izmeniti ili obrisati, a koji se ne može poklopiti čak ni kada dva korisnika pošalju poruku u istom trenutku. Vreme slanja se čuva u odvojenom svojstvu {c}SentAt{/c}, u UTC vremenskoj zoni, i po njemu se poruke uređuju pri prikazu.
+H3|Serverske akcije i potiskivanje obaveštenja
+P|Kontroler {c}ChatController{/c} izlaže jednu akciju za čitanje razgovora i tri akcije za izmenu stanja. Sve tri akcije koje menjaju stanje slede isti obrazac u tri koraka: proveri se ovlašćenje, promena se upiše u bazu, i tek onda se obaveštenje potisne svim zainteresovanim klijentima. Pristup {i}hub{/i} kontekstu izvan same {i}hub{/i} klase ostvaruje se preko {c}GlobalHost{/c} objekta.
+CODE|private static IHubContext ChatContext =>
+CODE|    GlobalHost.ConnectionManager.GetHubContext<ChatHub>();
+P|Akcija za slanje poruke upisuje poruku u bazu, a zatim isti prenosni objekat potiskuje u dve grupe, u grupu primaoca i u grupu pošiljaoca.
+CODE|[HttpPost]
+CODE|public ActionResult SendMessage(string receiver, string content)
+CODE|{
+CODE|    User me = CurrentUser;
+CODE|    if (me == null)
+CODE|        return new HttpStatusCodeResult(401);
+CODE|    if (string.IsNullOrWhiteSpace(receiver) || string.IsNullOrWhiteSpace(content))
+CODE|        return new HttpStatusCodeResult(400, "Receiver i content su obavezni.");
+CODE|
+CODE|    var message = new Message(me.Email, receiver, content.Trim());
+CODE|    _messageRepository.Add(message);
+CODE|    var dto = ToDto(message);
+CODE|
+CODE|    ChatContext.Clients.Group(receiver.Trim().ToLowerInvariant())
+CODE|               .messageReceived(dto);
+CODE|    ChatContext.Clients.Group(me.Email.Trim().ToLowerInvariant())
+CODE|               .messageReceived(dto);
+CODE|
+CODE|    return Json(dto);
+CODE|}
+P|Potiskivanje i u grupu pošiljaoca je namerno. Da se obaveštenje šalje samo primaocu, pošiljalac bi svoju poruku morao da prikaže sam, lokalno, pre nego što je server potvrdi. Ovako obe strane poruku prikazuju iz istog izvora, u istom obliku i sa istim identifikatorom koji je dodelio server, čime je uklonjena svaka mogućnost razlike u prikazu. Uz to, ako je pošiljalac prijavljen u više prozora, poruka se pojavljuje u svima.
+P|Primetno je i da se poziva metoda {c}messageReceived{/c} koja nigde u C# kodu nije definisana. To je moguće jer je {c}IHubContext{/c} dinamičan tip: ime metode i njeni argumenti se razrešavaju pri izvršavanju i prenose klijentu kao poziv, a klijent je taj koji tu metodu stvarno realizuje. Isti obrazac primenjen je i za akcije izmene i brisanja, koje potiskuju pozive {c}messageEdited{/c} i {c}messageDeleted{/c}.
+P|Provera ovlašćenja pri izmeni i brisanju je stroga: iako je poruka vidljiva obojici učesnika, izmeniti ili obrisati je može samo njen pošiljalac, pa se pre svake takve operacije upoređuje svojstvo {c}Sender{/c} sa identitetom prijavljenog korisnika i u slučaju neslaganja vraća se stanje 403.
+CODE|if (!string.Equals(message.Sender, me.Email, StringComparison.OrdinalIgnoreCase))
+CODE|    return new HttpStatusCodeResult(403);
+CODE|
+CODE|message.Content = content.Trim();
+CODE|message.IsEdited = true;
+CODE|_messageRepository.Update(message);
+P|Brisanje je realizovano kao trajno brisanje zapisa, operacijom {c}TableOperation.Delete{/c}, pa poruka fizički nestaje iz baze i time i za pošiljaoca i za primaoca. Alternativa bi bila takozvano tiho brisanje ({i}soft delete{/i}), kod koga zapis ostaje u bazi uz postavljenu oznaku, što bi omogućilo povraćaj i vođenje istorije, ali je za potrebe ovog rada izabrano jednostavnije rešenje sa jasnijim ponašanjem prema korisniku.
+H3|Klijentska strana
+P|Klijentski deo počinje uključivanjem dveju skripti. Prva je klijentska biblioteka SignalR-a, a druga je adresa {c}/signalr/hubs{/c}, koja ne postoji kao datoteka na disku, već je server generiše pri svakom zahtevu na osnovu {i}hub{/i} klasa u aplikaciji. Rezultat je JavaScript posrednik dostupan kao {c}$.connection.chatHub{/c}, pri čemu je ime u JavaScriptu izvedeno iz imena C# klase sa malim početnim slovom.
+CODE|<script src="~/Scripts/jquery.signalR-2.4.3.min.js"></script>
+CODE|<script src="~/signalr/hubs"></script>
+P|Nakon toga se definišu metode koje server poziva. One se dodaju objektu {c}chat.client{/c}, čije je samo postojanje dovoljno da okvir zna da poziv treba usmeriti na njih.
+CODE|var chat = $.connection.chatHub;
+CODE|
+CODE|chat.client.messageReceived = function (m) {
+CODE|    var fromMe = (m.sender || "").toLowerCase() === currentEmail;
+CODE|
+CODE|    if (belongsToActiveConversation(m)) {
+CODE|        renderMessage(m);
+CODE|        scrollToBottom();
+CODE|        if (!fromMe)
+CODE|            toastr.info(m.content, "Nova poruka od " + userDisplayName(m.sender));
+CODE|    } else if (!fromMe) {
+CODE|        toastr.info(m.content, "Nova poruka od " + userDisplayName(m.sender));
+CODE|        bumpUnread(m.sender);
+CODE|    }
+CODE|};
+CODE|
+CODE|chat.client.messageEdited = function (m) { /* izmena sadržaja u DOM-u */ };
+CODE|chat.client.messageDeleted = function (p) {
+CODE|    $('.msg[data-rowkey="' + p.rowKey + '"]').remove();
+CODE|};
+CODE|
+CODE|$.connection.hub.qs = { userEmail: currentEmail };
+CODE|$.connection.hub.start()
+CODE|    .done(function () { console.log("SignalR povezan."); })
+CODE|    .fail(function (err) { console.error("SignalR konekcija neuspešna:", err); });
+P|Rukovalac metode {c}messageReceived{/c} razlikuje tri slučaja i time ostvaruje traženo ponašanje interfejsa. Ako poruka pripada razgovoru koji je trenutno otvoren, odmah se dodaje u prikaz. Ako pripada nekom drugom razgovoru, prikazuje se {i}toastr{/i} obaveštenje i uvećava se brojač nepročitanih poruka na stavci sagovornika u spisku. U oba slučaja se proverava da poruka nije došla od samog korisnika, kako mu se ne bi prikazivalo obaveštenje o sopstvenoj poruci.
+P|Dodela vrednosti svojstvu {c}$.connection.hub.qs{/c} pre poziva metode {c}start{/c} je pritom obavezna, jer se niz upita ugrađuje u sam zahtev za uspostavljanje konekcije, koji šalje ta metoda. Poziv metode {c}start{/c} vraća objekat obećanja ({i}promise{/i}), pa se pomoću metoda {c}done{/c} i {c}fail{/c} razdvajaju uspešan i neuspešan ishod povezivanja.
+P|Svaki tekst koji dolazi sa servera propušta se kroz funkciju koja ga umeće kao čvor teksta, a zatim čita kao HTML, čime se sve posebne oznake pretvaraju u bezbedne znakovne nizove. Time je sprečeno izvršavanje ubačenog koda ({i}cross-site scripting{/i}) kroz sadržaj poruke.
+CODE|function escapeHtml(s) {
+CODE|    return $("<div>").text(s == null ? "" : s).html();
+CODE|}
+H3|Tok poruke kroz sistem
+P|Na slici 3.2 prikazan je celokupan tok poruke kroz sistem, od uspostavljanja konekcije, preko slanja, upisa i potiskivanja obaveštenja, do izmene i brisanja.
+IMG|chat-sekvenca.png|16.0
+FIGCAP|Slika 3.2. Sekvencni dijagram razmene poruke u realnom vremenu
+P|Iz dijagrama je vidljiva bitna osobina rešenja: poruka se u bazu upisuje pre nego što se obaveštenje potisne klijentima. Time je isključena mogućnost da se poruka prikaže kod primaoca, a da zatim upis u bazu ne uspe, pa da ta poruka nestane pri prvom osvežavanju stranice. Cena je nešto veće kašnjenje, jednako trajanju upisa u tabelu, što je u ovom slučaju prihvatljivo.
+P|Vidljivo je i da postoje dva odvojena kanala prema pošiljaocu. Jedan je sinhroni HTTP odgovor sa prenosnim objektom poruke, kao ishod njegovog zahteva, a drugi je potisnuto obaveštenje kroz {i}hub{/i}. Prikaz se oslanja isključivo na potisnuto obaveštenje, a HTTP odgovor se koristi samo za potvrdu uspeha, čime je logika prikaza svedena na jedan jedini put izvršavanja, isti za pošiljaoca i za primaoca.
+H2|Prikaz ključnih ekrana
+P|U ovoj tački prikazani su ključni ekrani aplikacije, u redosledu kojim ih korisnik obično prolazi. Slike od 3.3 do 3.8 prikazuju stvarno stanje aplikacije pokrenute nad lokalnim emulatorom skladišta.
+P|Na slici 3.3 prikazana je strana za registraciju korisnika, sa obrascem za unos osnovnih podataka i izborom slike profila.
+FIGPH|6.5|Ekran za registraciju korisnika (/Registration/Index)
+FIGCAP|Slika 3.3. Strana za registraciju korisnika
+P|Na slici 3.4 prikazana je početna strana sa spiskom tema. Za svaku temu vidljivi su slika, naslov, opis, brojači glasova, polje za unos komentara, spisak postojećih komentara i dugme za pretplatu, dok se u gornjem delu strane nalaze polje za pretragu i izbornik za sortiranje.
+FIGPH|8.5|Početna strana sa spiskom tema, glasovima i komentarima (/Home/Index)
+FIGCAP|Slika 3.4. Početna strana sa spiskom tema
+P|Na slici 3.5 prikazana je strana za objavljivanje nove teme, a na slici 3.6 strana za uređivanje profila, na kojoj korisnik pored svojih podataka vidi i spisak sopstvenih tema sa mogućnošću brisanja tema i komentara.
+FIGPH|6.0|Strana za objavljivanje nove teme (/Home/CreateTopic)
+FIGCAP|Slika 3.5. Strana za objavljivanje nove teme
+FIGPH|7.0|Strana za uređivanje profila sa spiskom sopstvenih tema (/Registration/EditUser)
+FIGCAP|Slika 3.6. Strana za uređivanje profila korisnika
+P|Na slici 3.7 prikazan je ekran za razmenu poruka, koji predstavlja rezultat druge faze rada. Levi deo ekrana zauzima spisak registrovanih korisnika, sa oznakama nepročitanih poruka, a desni deo prikaz izabranog razgovora sa poljem za unos nove poruke. Sopstvene poruke su poravnate desno i imaju dodatne radnje za izmenu i brisanje, dok su poruke sagovornika poravnate levo. Preporučuje se da se ekran snimi iz dva prozora pregledača postavljena jedan pored drugog, kako bi se videlo trenutno dostavljanje poruke i {i}toastr{/i} obaveštenje.
+FIGPH|8.5|Ekran za razmenu poruka u realnom vremenu, prikazan iz dva prozora pregledača (/Chat/Index)
+FIGCAP|Slika 3.7. Ekran za razmenu poruka u realnom vremenu
+P|Na slici 3.8 prikazana je nadzorna tabla dostupnosti servisa, sa kružnim dijagramima procenta dostupnosti za dva vremenska intervala i tabelarnim pregledom pojedinačnih provera.
+FIGPH|7.0|Nadzorna tabla dostupnosti servisa (HealthStatusService, priključak 8082)
+FIGCAP|Slika 3.8. Nadzorna tabla dostupnosti servisa
+H2|Performanse rešenja
+P|Performanse rešenja u ovoj tački razmatraju se analitički, na osnovu složenosti operacija nad skladištem i osobina izabranih protokola. Sistematično merenje pod opterećenjem nije izvedeno, jer je rešenje ispitivano nad lokalnim emulatorom skladišta, čije se vreme odziva bitno razlikuje od stvarne usluge u oblaku, pa bi izmerene vrednosti bile obmanjujuće. Vrednosti u tabeli 3.6 zato predstavljaju red veličine broja operacija nad skladištem, a ne izmerena vremena.
+TABCAP|Tabela 3.6. Analiza složenosti ključnih operacija nad skladištem
+TABLE|3
+TR|Operacija|Broj i tip operacija|Napomena
+TR|Prijava korisnika|1 upit nad celom particijom korisnika|Može se svesti na point query po ključu
+TR|Učitavanje početne strane|1 upit nad celom particijom tema|Raste linearno sa brojem tema
+TR|Glasanje na temu|1 čitanje + 1 upis celog zapisa|Ponovni upis svih serijalizovanih kolekcija
+TR|Postavljanje komentara|1 čitanje + 2 upisa + 1 upis u red|Upis u red ne blokira odgovor korisniku
+TR|Učitavanje razgovora|1 upit nad jednom particijom|Particija sadrži tačno jedan razgovor
+TR|Slanje poruke|1 upis + 2 potiskivanja kroz hub|Point insert, nezavisan od broja poruka
+TR|Izmena ili brisanje poruke|1 point query + 1 upis ili brisanje|Oba ključa poznata, konstantno vreme
+ENDTABLE|
+P|Najbolje osobine ima upravo deo uveden u drugoj fazi. Slanje poruke je pojedinačan upis u particiju, čije vreme ne zavisi ni od ukupnog broja poruka u sistemu ni od dužine konkretnog razgovora. Izmena i brisanje poruke su pravi {i}point{/i} upiti, jer su poznata oba ključa, identifikator razgovora i GUID poruke. Učitavanje razgovora je upit nad jednom particijom, koji se izvršava sa jednog fizičkog servera, što je posledica opisanog dizajna ključeva.
+P|Prednost potiskivanja nad periodičnim ispitivanjem može se i kvantifikovati. Ako bi se za osvežavanje razgovora koristilo ispitivanje na svakih {i}t{/i} sekundi, broj zahteva {i}Z{/i} u toku jednog sata, za {i}m{/i} istovremeno prijavljenih korisnika, iznosio bi po izrazu (2):
+EQ|Z = m · ( 3600 / t )|2
+P|Za sto prijavljenih korisnika i interval od dve sekunde to daje 180.000 zahteva na sat, od kojih velika većina vraća prazan rezultat, uz prosečno kašnjenje prikaza od jedne sekunde. U rešenju sa potiskivanjem, broj prenosa jednak je broju stvarno poslatih poruka, a kašnjenje se svodi na trajanje upisa u bazu i prolaz kroz mrežu.
+P|Sa druge strane, postoje i mesta na kojima rešenje ne skalira dobro i ona su ovde navedena namerno, jer predstavljaju osnovu za predloge poboljšanja u zaključku.
+BUL|Sve teme se čuvaju u jednoj particiji, sa konstantnim ključem {i}Topic{/i}, pa svako učitavanje početne strane čita celu particiju. Rast broja tema linearno povećava količinu prenesenih podataka i vreme odziva.
+BUL|Pretraga po naslovu i sortiranje izvršavaju se u memoriji veb uloge, nad prethodno pročitanim celim skupom tema, jer skladište ne podržava ni pretragu po delu teksta ni sortiranje po svojstvu koje nije ključ.
+BUL|Svaka izmena teme, uključujući i jedan glas, ponovo upisuje ceo zapis sa svim serijalizovanim kolekcijama. Kako lista komentara raste, raste i količina podataka koja se prenosi pri svakoj takvoj izmeni.
+BUL|Serijalizovane kolekcije su ograničene veličinom jednog svojstva, koja u {i}Azure Table Storage{/i} skladištu iznosi 64 kilobajta, pa tema sa veoma velikim brojem komentara predstavlja tvrdu granicu modela.
+BUL|Prijava korisnika čita celu particiju korisnika i traži odgovarajući zapis u memoriji, iako je adresa e-pošte upravo {c}RowKey{/c}, pa bi se operacija mogla svesti na {i}point query{/i} u konstantnom vremenu.
+BUL|Radna petlja uloge za obaveštavanje nema pauzu između neuspešnih preuzimanja iz reda, pa kada je red prazan neprekidno ispituje skladište i time troši procesorsko vreme i naplative operacije.
+BUL|Sve uloge pokreću se u po jednoj instanci, što ceo sistem čini osetljivim na otkaz pojedinačnog čvora ({i}single point of failure{/i}).
+P|Poseban slučaj predstavlja skaliranje na više instanci, koje bi u trenutnom obliku rešenja narušilo ispravnost dvaju mehanizama. Podaci o prijavljenom korisniku čuvaju se u sesiji u memoriji procesa, pa bi se pri raspodeli zahteva na više instanci korisnik naizmenično prikazivao kao prijavljen i neprijavljen. Isto važi i za evidenciju grupa u SignalR-u, koja se takođe vodi u memoriji pojedinačne instance, pa poruka potisnuta na instanci koja je obradila zahtev ne bi stigla do primaoca povezanog na drugu instancu.
+SB|
+H1|Zaključak
+P|U okviru rada realizovana je veb aplikacija za deljenje i diskutovanje sadržaja, izgrađena u celini na platformi Microsoft Azure kao skup od četiri nezavisne uloge, i nadograđena modulom za razmenu privatnih poruka u realnom vremenu. Time su ispunjeni i funkcionalni i arhitekturni ciljevi postavljeni u uvodnom poglavlju.
+P|Najvažniji zaključak rada odnosi se na izbor mehanizma komunikacije. U sistemu su primenjena tri različita obrasca i pokazalo se da ni jedan od njih ne može zameniti ostale. Red poruka je bio ispravan izbor za obaveštavanje elektronskom poštom, jer razdvaja trajanje tog posla od vremena odziva prema korisniku i obezbeđuje ponovni pokušaj u slučaju greške. Sinhroni poziv na daljinu bio je ispravan izbor za proveru dostupnosti, jer se tu ne traži prenos podataka već samo odgovor na pitanje da li je poziv moguće uspostaviti. Trajna konekcija sa serverskim potiskivanjem bila je jedini ispravan izbor za razmenu poruka, jer je jedina u stanju da promenu dostavi klijentu koji je nije zahtevao.
+P|Druga faza rada potvrdila je i vrednost početne dekompozicije. Ceo modul za razmenu poruka uveden je bez izmene ijedne postojeće klase prve faze, dodavanjem novog modela, repozitorijuma, kontrolera, {i}hub{/i} klase i prikaza, pri čemu je jedina izmena u postojećem kodu bilo dodavanje jedne stavke u navigacionu traku. Takva mogućnost proširenja bez zadiranja u postojeći kod posledica je doslednog razdvajanja odgovornosti na uloge i na sloj pristupa podacima.
+P|Treći zaključak tiče se uticaja izbora ključeva na performanse u NoSQL skladištu. Dizajn u kome se identifikator razgovora izračunava sortiranjem i spajanjem adresa učesnika, uveden u drugoj fazi, pokazao je najbolje osobine u celom rešenju, jer svodi čitanje razgovora na upit nad jednom particijom a izmenu i brisanje na upit u konstantnom vremenu. Uporedno, delovi prve faze u kojima se koristi konstantan ključ particije čitaju ceo skup podataka pri svakom prikazu. Ista količina podataka i isto skladište daju, dakle, bitno različite performanse u zavisnosti od toga kako su ključevi izabrani, što je najkorisnija praktična pouka celog rada.
+H2|Predlozi za dalja usavršavanja
+P|Analiza performansi iz tačke 3.7 i uočena ograničenja u realizaciji upućuju na nekoliko pravaca poboljšanja, navedenih po prioritetu.
+BUL|{b}Bezbednost pristupnih podataka.{/b} Lozinke korisnika trenutno se čuvaju u otvorenom obliku i treba ih zameniti kriptografskim odzivom sa nasumičnom solju, uz upotrebu namenskog algoritma otpornog na napad probanjem. Isto tako, pristupni podaci za SMTP server nalaze se neposredno u programskom kodu i treba ih premestiti u konfiguraciju uloge, odnosno u namensko skladište tajni kao što je {i}Azure Key Vault{/i}.
+BUL|{b}Provera identiteta u hubu.{/b} Identitet korisnika se u {i}hub{/i} klasu prenosi kroz niz upita, što znači da ga klijent sam navodi i da se može izmeniti. Trebalo bi ga preuzimati iz proverenog konteksta korisnika, preko svojstva {c}Context.User{/c}, čime bi lažno predstavljanje pri pridruživanju grupi postalo nemoguće.
+BUL|{b}Priprema za skaliranje na više instanci.{/b} Da bi sistem radio ispravno sa više instanci po ulozi, potrebno je stanje sesije premestiti u deljeno skladište, a SignalR-u dodati potporni kanal ({i}backplane{/i}), na primer nad uslugom {i}Azure Service Bus{/i} ili {i}Redis{/i}, kako bi obaveštenje potisnuto na jednoj instanci stiglo do klijenata povezanih na sve ostale.
+BUL|{b}Preprojektovanje ključeva particija u prvoj fazi.{/b} Konstantan ključ particije za teme treba zameniti ključem koji podatke raspoređuje, na primer po vremenskom periodu ili po autoru teme, a komentare izdvojiti iz serijalizovanog zapisa u sopstvenu tabelu, sa identifikatorom teme kao ključem particije. Time bi se uklonilo i ograničenje od 64 kilobajta po svojstvu i potreba da se ceo zapis ponovo upisuje pri svakoj izmeni.
+BUL|{b}Deobno učitavanje sadržaja.{/b} Početnu stranu i prikaz razgovora treba dopuniti učitavanjem po stranicama, uz pomoć oznake nastavka ({i}continuation token{/i}), tako da se pri prvom prikazu prenosi samo najnoviji deo podataka.
+BUL|{b}Uvođenje pauze u radnu petlju.{/b} Petlju uloge za obaveštavanje treba dopuniti kratkim čekanjem kada je red prazan, po mogućstvu sa postepenim uvećavanjem intervala, čime se smanjuje nepotrebno trošenje procesorskog vremena i naplativih operacija nad skladištem.
+BUL|{b}Potvrde o prijemu i pregledu poruka.{/b} Model poruke treba dopuniti stanjem isporuke i pregleda, a {i}hub{/i} klasu metodama kojima klijent potvrđuje prijem, čime bi se dobili pokazatelji uobičajeni u savremenim aplikacijama za razmenu poruka, kao i trajne oznake nepročitanih poruka koje bi preživele osvežavanje stranice.
+BUL|{b}Grupni razgovori i deljenje datoteka.{/b} Postojeći mehanizam grupa u SignalR-u i dizajn ključeva u tabeli poruka omogućavaju proširenje na razgovore sa više učesnika, pri čemu bi se kao identifikator razgovora koristio ključ same grupe umesto izračunatog para adresa. Slanje datoteka moguće je realizovati otpremanjem u postojeće {i}blob{/i} skladište i prenosom samo adrese kroz poruku.
+BUL|{b}Automatizovano ispitivanje.{/b} Ručno ispitivanje treba zameniti jediničnim ispitivanjem sloja pristupa podacima i logike glasanja, kao i integracionim ispitivanjem toka poruke kroz {i}hub{/i}, čime bi se obezbedilo da buduće izmene ne naruše postojeće ponašanje.
+SB|
+H1NN|Literatura
+LIT|[1] Microsoft. "What is Azure Cloud Services (classic)?" learn.microsoft.com. https://learn.microsoft.com/en-us/azure/cloud-services/cloud-services-choose-me (pristupljeno: septembar 2026).
+LIT|[2] Microsoft. "Azure Table storage design guidelines." learn.microsoft.com. https://learn.microsoft.com/en-us/azure/storage/tables/table-storage-design-guidelines (pristupljeno: septembar 2026).
+LIT|[3] Microsoft. "Introduction to SignalR." learn.microsoft.com. https://learn.microsoft.com/en-us/aspnet/signalr/overview/getting-started/introduction-to-signalr (pristupljeno: septembar 2026).
+LIT|[4] Microsoft. "Introduction to SignalR Hubs." learn.microsoft.com. https://learn.microsoft.com/en-us/aspnet/signalr/overview/guide-to-the-api/hubs-api-guide-server (pristupljeno: septembar 2026).
+LIT|[5] Microsoft. "Working with Groups in SignalR." learn.microsoft.com. https://learn.microsoft.com/en-us/aspnet/signalr/overview/guide-to-the-api/working-with-groups (pristupljeno: septembar 2026).
+LIT|[6] Microsoft. "Introduction to SignalR Scaleout." learn.microsoft.com. https://learn.microsoft.com/en-us/aspnet/signalr/overview/performance/scaleout-in-signalr (pristupljeno: septembar 2026).
+LIT|[7] Microsoft. "Get started with Azure Queue Storage using .NET." learn.microsoft.com. https://learn.microsoft.com/en-us/azure/storage/queues/storage-dotnet-how-to-use-queues (pristupljeno: septembar 2026).
+LIT|[8] Microsoft. "What is Windows Communication Foundation?" learn.microsoft.com. https://learn.microsoft.com/en-us/dotnet/framework/wcf/whats-wcf (pristupljeno: septembar 2026).
+LIT|[9] Microsoft. "ASP.NET MVC Pattern." dotnet.microsoft.com. https://dotnet.microsoft.com/en-us/apps/aspnet/mvc (pristupljeno: septembar 2026).
+LIT|[10] Microsoft. "OWIN Startup Class Detection." learn.microsoft.com. https://learn.microsoft.com/en-us/aspnet/aspnet/overview/owin-and-katana/owin-startup-class-detection (pristupljeno: septembar 2026).
+LIT|[11] I. Fette i A. Melnikov, "The WebSocket Protocol," RFC 6455, IETF, decembar 2011. [Online]. Dostupno na: https://www.rfc-editor.org/rfc/rfc6455
+LIT|[12] J. Newton-King. "Newtonsoft.Json Documentation." newtonsoft.com. https://www.newtonsoft.com/json/help/html/Introduction.htm (pristupljeno: septembar 2026).
+LIT|[13] Bootstrap. "Bootstrap 3 Documentation." getbootstrap.com. https://getbootstrap.com/docs/3.4/ (pristupljeno: septembar 2026).
+LIT|[14] Chart.js. "Chart.js Documentation." chartjs.org. https://www.chartjs.org/docs/latest/ (pristupljeno: septembar 2026).
+H1NN|Spisak korišćenih slika i tabela
+LIT|Slika 3.1. Arhitektura sistema sa prikazom uloga, protokola i usluga skladišta. Izvor: dijagram izradio autor rada na osnovu strukture datoteke ServiceDefinition.csdef i izvornog koda projekta.
+LIT|Slika 3.2. Sekvencni dijagram razmene poruke u realnom vremenu. Izvor: dijagram izradio autor rada na osnovu izvornog koda klasa ChatHub, ChatController i prikaza Chat/Index.cshtml.
+LIT|Slika 3.3. Strana za registraciju korisnika. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Slika 3.4. Početna strana sa spiskom tema. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Slika 3.5. Strana za objavljivanje nove teme. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Slika 3.6. Strana za uređivanje profila korisnika. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Slika 3.7. Ekran za razmenu poruka u realnom vremenu. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Slika 3.8. Nadzorna tabla dostupnosti servisa. Izvor: snimak ekrana aplikacije koju je izradio autor rada.
+LIT|Tabela 2.1. Pregled korišćenih tehnologija i biblioteka. Izvor: sačinio autor rada na osnovu datoteka packages.config u projektima rešenja.
+LIT|Tabela 3.1. Pregled uloga u okviru cloud servisa. Izvor: sačinio autor rada na osnovu datoteke ServiceDefinition.csdef.
+LIT|Tabela 3.2. Pregled tabela u Azure Table Storage skladištu. Izvor: sačinio autor rada na osnovu klasa repozitorijuma u izvornom kodu.
+LIT|Tabela 3.3. Struktura tabele UsersTable. Izvor: sačinio autor rada na osnovu klase User.
+LIT|Tabela 3.4. Struktura tabele TopicTable. Izvor: sačinio autor rada na osnovu klase Topic.
+LIT|Tabela 3.5. Struktura tabele MessagesTable. Izvor: sačinio autor rada na osnovu klase Message.
+LIT|Tabela 3.6. Analiza složenosti ključnih operacija nad skladištem. Izvor: sačinio autor rada analizom izvornog koda repozitorijuma i kontrolera.

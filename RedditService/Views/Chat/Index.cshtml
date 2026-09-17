@@ -1,0 +1,231 @@
+@model List<RedditService.Models.User>
+@{
+    Layout = null;
+    string currentEmail = ViewBag.CurrentEmail as string;
+    string currentName = ViewBag.CurrentName as string;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title>
+    <link rel="stylesheet" href="~/Content/bootstrap.min.css">
+    <link rel="stylesheet" href="~/Content/toastr.min.css">
+    <style>
+        .user-item { position: relative; }
+        .unread-badge { position:absolute; right:10px; top:50%; transform:translateY(-50%); }
+        .chat-wrapper { display: flex; gap: 16px; height: 70vh; }
+        .user-list { width: 260px; overflow-y: auto; border-right: 1px solid #ddd; }
+        .user-list .list-group-item { cursor: pointer; }
+        .user-list .list-group-item.active { background:#007bff; border-color:#007bff; }
+        .chat-panel { flex: 1; display: flex; flex-direction: column; }
+        .messages { flex: 1; overflow-y: auto; padding: 8px; background:#f8f9fa; border:1px solid #eee; }
+        .msg { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; max-width: 75%; position: relative; }
+        .msg.mine { background:#d1e7ff; margin-left:auto; text-align:right; }
+        .msg.theirs { background:#fff; border:1px solid #e0e0e0; }
+        .msg .meta { font-size: 11px; color:#666; margin-top:4px; }
+        .msg .actions { font-size: 11px; margin-top:4px; }
+        .msg .actions a { cursor:pointer; margin-left:8px; }
+        .compose { display:flex; gap:8px; margin-top:10px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3>Poruke</h3>
+            <a href="/Home/Index" class="btn btn-outline-secondary btn-sm">Nazad na pocetnu</a>
+        </div>
+
+        <div class="chat-wrapper">
+            <div class="user-list">
+                <div class="list-group">
+                    @foreach (var u in Model)
+                    {
+                        <a class="list-group-item list-group-item-action user-item"
+                           data-email="@u.Email">
+                            @u.Name @u.Lastname <br /><small class="text-muted">@u.Email</small>
+                        </a>
+                    }
+                </div>
+            </div>
+
+            <div class="chat-panel">
+                <h5 id="conversationTitle">Izaberi korisnika za caskanje</h5>
+                <div id="messages" class="messages"></div>
+                <div class="compose">
+                    <input type="text" id="messageInput" class="form-control" placeholder="Napisi poruku..." disabled />
+                    <button id="sendBtn" class="btn btn-primary" disabled>Posalji</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="~/Scripts/jquery-3.4.1.min.js"></script>
+    <script src="~/Scripts/toastr.min.js"></script>
+    <script src="~/Scripts/jquery.signalR-2.4.3.min.js"></script>
+    <script src="~/signalr/hubs"></script>
+    <script>
+        var currentEmail = "@currentEmail".toLowerCase();
+        var activeOther = null;
+
+        function escapeHtml(s) {
+            return $("<div>").text(s == null ? "" : s).html();
+        }
+
+        function formatTime(iso) {
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return "";
+            return d.toLocaleString();
+        }
+
+        function belongsToActiveConversation(m) {
+            if (!activeOther) return false;
+            var s = (m.sender || "").toLowerCase();
+            var r = (m.receiver || "").toLowerCase();
+            var other = activeOther.toLowerCase();
+            return (s === currentEmail && r === other) || (s === other && r === currentEmail);
+        }
+
+        function renderMessage(m) {
+            var mine = (m.sender || "").toLowerCase() === currentEmail;
+            var editedTag = m.isEdited ? ' <em>(izmenjeno)</em>' : '';
+            var actions = '';
+            if (mine) {
+                actions = '<div class="actions">' +
+                    '<a class="edit-link" href="#">Izmeni</a>' +
+                    '<a class="delete-link text-danger" href="#">Obrisi</a>' +
+                    '</div>';
+            }
+            var html = '<div class="msg ' + (mine ? 'mine' : 'theirs') + '" data-rowkey="' + m.rowKey + '">' +
+                '<div class="content">' + escapeHtml(m.content) + '</div>' +
+                '<div class="meta">' + escapeHtml(m.sender) + ' · ' + formatTime(m.sentAt) + editedTag + '</div>' +
+                actions +
+                '</div>';
+            $("#messages").append(html);
+        }
+
+        function scrollToBottom() {
+            var box = document.getElementById("messages");
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function loadConversation(otherEmail) {
+            activeOther = otherEmail;
+            $("#messages").empty();
+            $("#messageInput").prop("disabled", false);
+            $("#sendBtn").prop("disabled", false);
+            clearUnread(otherEmail); // otvaranjem konverzacije nestaje "unread" oznaka
+            $.getJSON("/Chat/GetConversation", { otherEmail: otherEmail }, function (data) {
+                data.forEach(renderMessage);
+                scrollToBottom();
+            });
+        }
+
+        // ---- "Unread" indikatori na listi korisnika ----
+        function userItem(email) {
+            return $('.user-item').filter(function () {
+                return ($(this).data("email") || "").toLowerCase() === (email || "").toLowerCase();
+            });
+        }
+        function userDisplayName(email) {
+            var el = userItem(email);
+            return el.length ? el.text().trim().split("\n")[0].trim() : email;
+        }
+        function bumpUnread(email) {
+            var el = userItem(email);
+            if (!el.length) return;
+            var badge = el.find(".unread-badge");
+            if (!badge.length) {
+                badge = $('<span class="badge badge-danger unread-badge">0</span>');
+                el.append(badge);
+            }
+            badge.text((parseInt(badge.text(), 10) || 0) + 1);
+        }
+        function clearUnread(email) {
+            userItem(email).find(".unread-badge").remove();
+        }
+
+        $(function () {
+            var chat = $.connection.chatHub;
+
+            chat.client.messageReceived = function (m) {
+                var fromMe = (m.sender || "").toLowerCase() === currentEmail;
+
+                if (belongsToActiveConversation(m)) {
+                    // Poruka pripada trenutno otvorenoj konverzaciji -> prikaži odmah
+                    renderMessage(m);
+                    scrollToBottom();
+                    // Ako je stigla od sagovornika, i dalje daj diskretno obaveštenje
+                    if (!fromMe) {
+                        toastr.info(m.content, "Nova poruka od " + userDisplayName(m.sender));
+                    }
+                } else if (!fromMe) {
+                    // Poruka iz druge konverzacije -> toast obaveštenje + "unread" badge
+                    toastr.info(m.content, "Nova poruka od " + userDisplayName(m.sender));
+                    bumpUnread(m.sender);
+                }
+            };
+
+            chat.client.messageEdited = function (m) {
+                if (!belongsToActiveConversation(m)) return;
+                var el = $('.msg[data-rowkey="' + m.rowKey + '"]');
+                if (el.length) {
+                    el.find(".content").html(escapeHtml(m.content));
+                    if (m.isEdited && el.find(".meta em").length === 0) {
+                        el.find(".meta").append(' <em>(izmenjeno)</em>');
+                    }
+                }
+            };
+
+            chat.client.messageDeleted = function (payload) {
+                $('.msg[data-rowkey="' + payload.rowKey + '"]').remove();
+            };
+
+            $.connection.hub.qs = { userEmail: currentEmail };
+
+            $.connection.hub.start()
+                .done(function () { console.log("SignalR povezan."); })
+                .fail(function (err) { console.error("SignalR konekcija neuspešna:", err); });
+
+            $(".user-item").on("click", function () {
+                $(".user-item").removeClass("active");
+                $(this).addClass("active");
+                var email = $(this).data("email");
+                $("#conversationTitle").text("Konverzacija sa: " + email);
+                loadConversation(email);
+            });
+
+            function sendMessage() {
+                var content = $("#messageInput").val();
+                if (!content.trim() || !activeOther) return;
+                $.post("/Chat/SendMessage", { receiver: activeOther, content: content }, function () {
+                    $("#messageInput").val("");
+                });
+            }
+
+            $("#sendBtn").on("click", sendMessage);
+            $("#messageInput").on("keypress", function (e) {
+                if (e.which === 13) { e.preventDefault(); sendMessage(); }
+            });
+
+            $("#messages").on("click", ".delete-link", function (e) {
+                e.preventDefault();
+                var rowKey = $(this).closest(".msg").data("rowkey");
+                if (!confirm("Obrisati poruku? Nestace za oba korisnika.")) return;
+                $.post("/Chat/DeleteMessage", { rowKey: rowKey, otherEmail: activeOther });
+            });
+
+            $("#messages").on("click", ".edit-link", function (e) {
+                e.preventDefault();
+                var msgEl = $(this).closest(".msg");
+                var rowKey = msgEl.data("rowkey");
+                var current = msgEl.find(".content").text();
+                var updated = prompt("Izmeni poruku:", current);
+                if (updated === null || !updated.trim() || updated === current) return;
+                $.post("/Chat/EditMessage", { rowKey: rowKey, otherEmail: activeOther, content: updated });
+            });
+        });
+    </script>
+</body>
+</html>

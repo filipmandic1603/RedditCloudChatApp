@@ -1,0 +1,56 @@
+﻿/* custom.css */
+
+.post {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f9f9f9;
+}
+
+    .post img {
+        max-width: 100%;
+        height: auto;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+.post-content {
+    margin-top: 15px;
+}
+
+.post-buttons {
+    margin-top: 15px;
+}
+
+.vote-buttons {
+    display: flex;
+    align-items: center;
+}
+
+.vote-buttons form {
+    margin-right: 10px;
+}
+
+.badge {
+    font-size: 1em;
+    margin-right: 10px;
+}
+
+.comments-list .comment {
+    margin-bottom: 15px;
+}
+
+.comment hr {
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.form-inline .form-control {
+    margin-right: 10px;
+}
+
+.form-inline .btn {
+    margin-right: 10px;
+}

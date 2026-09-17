@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($ng = \"$env:TEMP\\\\nuget.exe\"; $pkgs = \"C:\\\\Users\\\\filip\\\\Desktop\\\\Projects\\\\Fakultet\\\\RedditCloud-master\\\\packages\"; & $ng install Microsoft.AspNet.SignalR -Version 2.4.3 -OutputDirectory $pkgs -DependencyVersion Highest -Framework net472 2>&1 | Select-Object -Last 40)",
+      "PowerShell($msb = \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\"; & $msb \"C:\\\\Users\\\\filip\\\\Desktop\\\\Projects\\\\Fakultet\\\\RedditCloud-master\\\\RedditService\\\\RedditService.csproj\" /t:Build /p:Configuration=Debug /v:minimal /nologo 2>&1 | Select-Object -Last 40)",
+      "PowerShell($msb = \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\"; & $msb \"C:\\\\Users\\\\filip\\\\Desktop\\\\Projects\\\\Fakultet\\\\RedditCloud-master\\\\RedditService\\\\RedditService.csproj\" /t:Build /p:Configuration=Debug /v:minimal /nologo 2>&1 | Select-Object -Last 20)"
+    ]
+  }
+}

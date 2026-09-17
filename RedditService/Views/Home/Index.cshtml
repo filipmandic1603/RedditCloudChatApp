@@ -1,0 +1,148 @@
+﻿@model List<RedditService.Models.Topic>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vaša stranica</title>
+
+    <link rel="stylesheet" href="~/Content/bootstrap.min.css">
+    <link rel="stylesheet" href="~/Content/HomePage.css">
+    <link rel="stylesheet" href="~/Content/Filters.css">
+    <link rel="stylesheet" href="~/Content/custom.css">
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="search-sort-container d-flex justify-content-between mb-4">
+            <form action="/Home/SearchTopic" method="get" class="form-inline">
+                <input type="text" name="searchTerm" class="form-control mr-2" placeholder="Search topics...">
+                <button type="submit" class="btn btn-primary">Pretraži</button>
+            </form>
+            <form action="/Home/Sort" method="get" class="form-inline">
+                <select name="sortOrder" class="form-control" onchange="this.form.submit()">
+                    <option selected disabled value="">Select a filter</option>
+                    <option value="latest">The latest</option>
+                    <option value="upvotes">The most upvotes</option>
+                    <option value="downvotes">The most downvotes</option>
+                    <option value="comments">The most comments</option>
+                </select>
+            </form>
+        </div>
+
+        @if (Session["LoggedInUser"] != null)
+        {
+            <h3>Your topics</h3>
+            foreach (var item in Model)
+            {
+                <div class="post card mb-4">
+                    <div class="card-body text-center">
+                        <img src="@item.ImageUrl" alt="Slika" class="card-img-top mb-3 mx-auto d-block">
+                        <h2 class="card-title">@item.Title</h2>
+                        <p class="card-text">@item.Description</p>
+                        <div class="post-buttons d-flex justify-content-between align-items-center">
+                            <div class="vote-buttons">
+                                <form action="/Home/UpVote" method="post" class="d-inline">
+                                    <input type="hidden" name="topicId" value="@item.Id">
+                                    <button type="submit" class="btn btn-success">Upvote</button>
+                                </form>
+                                <span class="badge badge-success">@item.NumberUpVote</span>
+                                <form action="/Home/DownVote" method="post" class="d-inline">
+                                    <input type="hidden" name="topicId" value="@item.Id">
+                                    <button type="submit" class="btn btn-danger">Downvote</button>
+                                </form>
+                                <span class="badge badge-danger">@item.NumberDownVote</span>
+                            </div>
+                            <form action="/Home/Comments" method="post" class="d-inline-flex mx-auto">
+                                <input type="hidden" name="topicId" value="@item.Id">
+                                <input type="text" name="Text" class="form-control mr-2" placeholder="Add comment...">
+                                <button type="submit" class="btn btn-primary">Comment</button>
+                            </form>
+                            <form action="/Home/Subscribe" method="post" class="d-inline ml-auto">
+                                <input type="hidden" name="topicId" value="@item.Id">
+                                <button type="submit" class="btn btn-secondary">Subscribe</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <h4>Comments</h4>
+                        <div class="comments-list">
+                            @foreach (var comment in item.Comments)
+                            {
+                                <div class="comment">
+                                    <p>Author: <strong>@comment.Author</strong></p>
+                                    <p>@comment.Text</p>
+                                    <hr class="my-2" />
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <h3>Log in to see your topics!</h3>
+        }
+
+        <hr />
+
+        <h3>All topics</h3>
+        @if (Model != null)
+        {
+            foreach (var item in Model)
+            {
+                <div class="post card mb-4">
+                    <div class="card-body text-center">
+                        <img src="@item.ImageUrl" alt="Slika" class="card-img-top mb-3 mx-auto d-block">
+                        <h2 class="card-title">@item.Title</h2>
+                        <p class="card-text">@item.Description</p>
+                        <div class="post-buttons d-flex justify-content-between align-items-center">
+                            <div class="vote-buttons">
+                                <form action="/Home/UpVote" method="post" class="d-inline">
+                                    <input type="hidden" name="topicId" value="@item.Id">
+                                    <button type="submit" class="btn btn-success" @(Session["LoggedInUser"] == null ? "disabled" : "")>Upvote</button>
+                                </form>
+                                <span class="badge badge-success">@item.NumberUpVote</span>
+                                <form action="/Home/DownVote" method="post" class="d-inline">
+                                    <input type="hidden" name="topicId" value="@item.Id">
+                                    <button type="submit" class="btn btn-danger" @(Session["LoggedInUser"] == null ? "disabled" : "")>Downvote</button>
+                                </form>
+                                <span class="badge badge-danger">@item.NumberDownVote</span>
+                            </div>
+                            <form action="/Home/Comments" method="post" class="d-inline-flex mx-auto">
+                                <input type="hidden" name="topicId" value="@item.Id">
+                                <input type="text" name="Text" class="form-control mr-2" placeholder="Add comment..." @(Session["LoggedInUser"] == null ? "disabled" : "")>
+                                <button type="submit" class="btn btn-primary" @(Session["LoggedInUser"] == null ? "disabled" : "")>Comment</button>
+                            </form>
+                            <form action="/Home/Subscribe" method="post" class="d-inline ml-auto">
+                                <input type="hidden" name="topicId" value="@item.Id">
+                                <button type="submit" class="btn btn-secondary" @(Session["LoggedInUser"] == null ? "disabled" : "")>Subscribe</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <h4>Comments</h4>
+                        <div class="comments-list">
+                            @foreach (var comment in item.Comments)
+                            {
+                                <div class="comment">
+                                    <p>Author: <strong>@comment.Author</strong></p>
+                                    <p>@comment.Text</p>
+                                    <hr class="my-2" />
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <p>Trenutno nema tema</p>
+        }
+    </div>
+
+    <script src="~/Scripts/jquery-3.3.1.min.js"></script>
+    <script src="~/Scripts/bootstrap.min.js"></script>
+</body>
+</html>

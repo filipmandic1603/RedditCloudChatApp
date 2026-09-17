@@ -1,0 +1,42 @@
+﻿@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Status</title>
+    <link rel="stylesheet" href="~/Content/Style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h2>Health Status</h2>
+        <div class="uptime">
+            <div class="uptime-24h" data-uptime24h="@Model.UptimePercentage24h">
+                <canvas id="uptimeChart24h"></canvas>
+                <p>Uptime in last 24h: <span class="percentage-24h">@Model.UptimePercentage24h</span>%</p>
+            </div>
+            <div class="uptime-1h" data-uptime1h="@Model.UptimePercentage1h">
+                <canvas id="uptimeChart1h"></canvas>
+                <p>Uptime in last 1h: <span class="percentage-1h">@Model.UptimePercentage1h</span>%</p>
+            </div>
+        </div>
+        <table>
+            <tr>
+                <th>Time</th>
+                <th>Status</th>
+            </tr>
+            @foreach (var check in Model.HealthChecks)
+            {
+                <tr>
+                    <td>@check.DateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@check.Status</td>
+                </tr>
+            }
+        </table>
+    </div>
+    <script src="~/Scripts/script.js"></script>
+</body>
+</html>
